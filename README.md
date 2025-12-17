@@ -45,6 +45,15 @@ Notes:
 - Applies SWA app settings automatically (use `-SkipAppSettings` to skip).
 - Uses shared RU at the database level (containers do not set throughput).
 
+## CI/CD (GitHub Actions)
+This repo includes a GitHub Actions workflow at `.github/workflows/azure-static-web-apps.yml`.
+
+1) In Azure Portal, open your Static Web App and copy the Deployment Token ("Manage deployment token").
+2) In GitHub: Repo Settings → Secrets and variables → Actions → New repository secret:
+   - Name: `AZURE_STATIC_WEB_APPS_API_TOKEN`
+   - Value: `<paste deployment token>`
+3) Push to `main` to deploy.
+
 ## Static Web App app settings
 Set these in the SWA "Configuration" (Environment variables):
 
