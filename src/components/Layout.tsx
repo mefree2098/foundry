@@ -45,7 +45,7 @@ function Layout() {
               <img
                 src={brandLogo}
                 alt={brandName}
-                className="h-9 w-9 rounded-lg bg-transparent object-contain ring-1 ring-white/10"
+                className="h-9 w-9 rounded-full bg-transparent object-contain ring-1 ring-white/10"
               />
             ) : null}
             <div className="text-lg font-semibold tracking-tight text-ntr-emerald-bright">{brandName}</div>
