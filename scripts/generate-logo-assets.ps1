@@ -1,6 +1,6 @@
 #requires -Version 7
 Param(
-  [string]$SourcePath = (Join-Path $PSScriptRoot "..\\img\\ntrlogo1.PNG"),
+  [string]$SourcePath = (Join-Path $PSScriptRoot "..\\img\\fixed.png"),
   [string]$OutDir = (Join-Path $PSScriptRoot "..\\public\\img")
 )
 
@@ -15,20 +15,50 @@ if (-not (Test-Path -LiteralPath $SourcePath)) {
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
-function New-SquareCanvas([System.Drawing.Image]$image) {
-  $size = [Math]::Max($image.Width, $image.Height)
+function New-CenteredSquareCrop([System.Drawing.Image]$image) {
+  $size = [Math]::Min($image.Width, $image.Height)
+  $srcX = [int](($image.Width - $size) / 2)
+  $srcY = [int](($image.Height - $size) / 2)
+  $srcRect = New-Object System.Drawing.Rectangle $srcX, $srcY, $size, $size
+  $destRect = New-Object System.Drawing.Rectangle 0, 0, $size, $size
+
   $bmp = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   $g.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+  $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
   $g.Clear([System.Drawing.Color]::Transparent)
-  $x = [int](($size - $image.Width) / 2)
-  $y = [int](($size - $image.Height) / 2)
-  $g.DrawImage($image, $x, $y, $image.Width, $image.Height)
+  $g.DrawImage($image, $destRect, $srcRect, [System.Drawing.GraphicsUnit]::Pixel)
   $g.Dispose()
   return $bmp
 }
 
-function Resize-Png([System.Drawing.Image]$image, [int]$size, [string]$destPath) {
+function New-CircularMask([System.Drawing.Image]$squareImage) {
+  $size = $squareImage.Width
+  $bmp = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $g.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+  $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+  $g.Clear([System.Drawing.Color]::Transparent)
+
+  $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+  try {
+    $path.AddEllipse(0, 0, $size, $size) | Out-Null
+    $g.SetClip($path)
+    $g.DrawImage($squareImage, 0, 0, $size, $size)
+    $g.ResetClip()
+  } finally {
+    $path.Dispose()
+    $g.Dispose()
+  }
+  return $bmp
+}
+
+function Resize-Png([System.Drawing.Image]$image, [int]$size, [string]$destPath, [int]$paddingPx) {
   $bmp = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   $g.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
@@ -37,7 +67,8 @@ function Resize-Png([System.Drawing.Image]$image, [int]$size, [string]$destPath)
   $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
   $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
   $g.Clear([System.Drawing.Color]::Transparent)
-  $g.DrawImage($image, 0, 0, $size, $size)
+  $inner = $size - (2 * $paddingPx)
+  $g.DrawImage($image, $paddingPx, $paddingPx, $inner, $inner)
   $g.Dispose()
 
   $bmp.Save($destPath, [System.Drawing.Imaging.ImageFormat]::Png)
@@ -46,11 +77,16 @@ function Resize-Png([System.Drawing.Image]$image, [int]$size, [string]$destPath)
 
 $src = [System.Drawing.Image]::FromFile($SourcePath)
 try {
-  $square = New-SquareCanvas $src
+  $square = New-CenteredSquareCrop $src
   try {
-    Resize-Png $square 512 (Join-Path $OutDir "ntr-logo.png")
-    Resize-Png $square 64 (Join-Path $OutDir "ntr-logo-64.png")
-    Resize-Png $square 32 (Join-Path $OutDir "ntr-logo-32.png")
+    $masked = New-CircularMask $square
+    try {
+      Resize-Png $masked 512 (Join-Path $OutDir "ntr-logo.png") 0
+      Resize-Png $masked 64 (Join-Path $OutDir "ntr-logo-64.png") 3
+      Resize-Png $masked 32 (Join-Path $OutDir "ntr-logo-32.png") 2
+    } finally {
+      $masked.Dispose()
+    }
   } finally {
     $square.Dispose()
   }
@@ -59,4 +95,3 @@ try {
 }
 
 Write-Host "Generated logo assets in $OutDir" -ForegroundColor Green
-
