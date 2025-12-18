@@ -5,7 +5,7 @@ Foundry is a simple, open-source “deploy a site for free on Azure” starter:
 - Azure Functions API (under `/api/*`)
 - Cosmos DB (free tier + shared database autoscale max 1000 RU)
 - Azure Storage (media uploads)
-- Admin portal with an AI assistant that can apply actions (themes, navigation, homepage sections, content)
+- Admin portal with an AI assistant that can apply actions (themes, navigation, homepage sections, content, media generation)
 
 ## Repo structure
 - Frontend (SPA): `/`
@@ -122,6 +122,31 @@ cd api
 npm install
 npm run build
 ```
+
+## Platform features
+- Modular homepage sections with 3D embed blocks (custom HTML or Three.js scripts).
+- 3D embeds on platform, news, and topic detail pages via `custom.embedHtml` + `custom.embedHeight`.
+- Media library backed by Azure Blob Storage (upload, browse, reuse).
+- OpenAI image generation (`gpt-image-1.5`) with automatic Blob upload.
+- AI usage tracking (chat + image tokens) with all‑time + last‑30‑days rollups.
+- Pricing overrides for cost estimation (manual or import from pricing text).
+
+## AI Assistant capabilities
+The Admin AI Assistant can:
+- Create/update/delete platforms, news, topics, and homepage sections.
+- Update navigation, theming, and content schema fields.
+- Generate images (with confirmation) and attach them to content.
+- Suggest or insert 3D embed code for homepage sections or content items.
+
+It sends a system training doc with every request, so it already knows the supported actions and data schema.
+
+## OpenAI pricing import (when auto-refresh fails)
+OpenAI uses Cloudflare on the pricing page, which can block server-side scraping. If the “Refresh from OpenAI” button fails:
+1) Open `https://openai.com/api/pricing/`
+2) Copy the full pricing text
+3) In Admin > AI usage & pricing, paste into **Import pricing from text** and click **Import**
+
+This sets `config.ai.pricing` so cost estimates work immediately.
 
 ## Notes on secrets (OpenAI)
 The admin AI assistant can store an OpenAI API key in the site config. The key is redacted from reads, but it still exists in Cosmos DB. If you need stronger guarantees, move secrets to a managed secret store (e.g., Key Vault) and proxy requests server-side with stricter auth.
