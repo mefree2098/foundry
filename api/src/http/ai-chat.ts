@@ -23,6 +23,7 @@ Action rules:
 
 Platform map:
 - Navigation: config.nav.links[] items are { id, label, href, enabled?, newTab? }. Internal hrefs start with "/".
+- Platform/news links must be a record (object) of label -> url, not an array.
 - Homepage builder: config.home.sections[] controls order/visibility. Section types supported:
   - trust, ai, platforms, news, topics, newsletter, richText, cta
   - Common fields: { id, type, enabled?, title?, subtitle?, maxItems?, markdown?, cta? }

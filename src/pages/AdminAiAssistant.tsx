@@ -99,6 +99,24 @@ function deepMerge<T>(base: T, patch: unknown): T {
   return out as T;
 }
 
+type LinkItem = { label?: string; url?: string; href?: string };
+
+function normalizeLinks(value: unknown) {
+  if (!value) return undefined;
+  if (Array.isArray(value)) {
+    const pairs = value
+      .map((item) => item as LinkItem)
+      .map((item) => ({
+        label: (item.label || "").trim(),
+        url: (item.url || item.href || "").trim(),
+      }))
+      .filter((item) => item.label && item.url);
+    return pairs.length ? Object.fromEntries(pairs.map((item) => [item.label, item.url])) : undefined;
+  }
+  if (typeof value === "object") return value;
+  return undefined;
+}
+
 function AdminAiAssistant() {
   const queryClient = useQueryClient();
   const { data: config } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
@@ -197,7 +215,9 @@ function AdminAiAssistant() {
           continue;
         }
         if (action.type === "platform.upsert") {
-          await savePlatform(action.value as any);
+          const payload = { ...(action.value as any) };
+          payload.links = normalizeLinks(payload.links);
+          await savePlatform(payload as any);
           continue;
         }
         if (action.type === "topic.upsert") {
@@ -205,7 +225,9 @@ function AdminAiAssistant() {
           continue;
         }
         if (action.type === "news.upsert") {
-          await saveNews(action.value as any);
+          const payload = { ...(action.value as any) };
+          payload.links = normalizeLinks(payload.links);
+          await saveNews(payload as any);
           continue;
         }
         if (action.type === "platform.delete") {
