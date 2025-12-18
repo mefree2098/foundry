@@ -219,6 +219,24 @@ export const siteConfigSchema = z.object({
     })
     .optional(),
   emailSettings: emailSettingsSchema.optional(),
+  ai: z
+    .object({
+      adminAssistant: z
+        .object({
+          activePersonalityId: z.string().optional(),
+          personalities: z
+            .array(
+              z.object({
+                id: z.string().min(1),
+                name: z.string().min(1),
+                prompt: z.string().optional(),
+              }),
+            )
+            .optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   content: z
     .object({
       schemas: z

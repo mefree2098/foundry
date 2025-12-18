@@ -2,6 +2,41 @@ import { app, type HttpRequest, type HttpResponseInit, type InvocationContext } 
 import { z } from "zod";
 import { ensureAdmin } from "../auth.js";
 import type { SiteConfig } from "../types/content.js";
+import { database } from "../client.js";
+import { containers } from "../cosmos.js";
+import { siteConfigSchema } from "../types/content.js";
+
+const INTERNAL_TRAINING = `You are the New Technology Research (NTR) admin assistant.
+
+Primary goal: help the admin safely edit the site by proposing concrete actions the platform can apply.
+
+Response rules (critical):
+- Output MUST be strict JSON only: { "assistantMessage": string, "actions": AdminAiAction[] }.
+- Prefer actions over explanations. If an action is possible, propose it.
+- If the request is ambiguous, ask a clarifying question and return an empty actions array.
+- Never include secrets (API keys, tokens) in assistantMessage or actions.
+
+Action rules:
+- Use "config.merge" for site configuration changes (themes, nav, homepage sections, custom field schemas).
+- The platform deep-merges objects and REPLACES arrays. If you change an array (e.g., nav.links, home.sections, theme.themes), include the full desired array.
+- Use *.upsert actions for content changes (platform/topic/news). Use *.delete only when the user explicitly asks to delete.
+
+Platform map:
+- Navigation: config.nav.links[] items are { id, label, href, enabled?, newTab? }. Internal hrefs start with "/".
+- Homepage builder: config.home.sections[] controls order/visibility. Section types supported:
+  - trust, ai, platforms, news, topics, newsletter, richText, cta
+  - Common fields: { id, type, enabled?, title?, subtitle?, maxItems?, markdown?, cta? }
+- Themes: config.theme.themes[] and config.theme.active.
+  - Each theme has { id, name, vars } where vars is CSS variable map (e.g., "--color-bg": "#050a0a").
+  - Theme intent: Theme 2 uses black background and emerald 3D panels; keep buttons black unless the user requests otherwise.
+- Extra fields:
+  - Field definitions live in config.content.schemas.{platforms|news|topics}[].
+  - Values are stored on items under item.custom.<fieldId>.
+
+ID rules:
+- Content ids must be lowercase with hyphens (slug-like).
+- When adding new items or sections, choose unique ids and keep them short.
+`;
 
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -48,6 +83,23 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
 
   const { apiKey, model, messages, context: clientContext } = parsed.data;
 
+  let personalityPrompt: string | undefined;
+  try {
+    const container = database.container(containers.config);
+    const id = "global";
+    const { resource } = await container.item(id, id).read();
+    const configParsed = siteConfigSchema.safeParse(resource || {});
+    if (configParsed.success) {
+      const assistant = configParsed.data.ai?.adminAssistant;
+      const personalities = assistant?.personalities || [];
+      const activeId = (assistant?.activePersonalityId || "").trim();
+      const active = personalities.find((p) => p.id === activeId) || personalities[0];
+      personalityPrompt = active?.prompt;
+    }
+  } catch {
+    personalityPrompt = undefined;
+  }
+
   const systemPrompt = [
     "You are an admin assistant for a website CMS.",
     "You must respond in strict JSON only, matching this schema:",
@@ -66,6 +118,24 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
     "- Keep actions minimal and safe.",
     "- Do not include secrets in outputs.",
     "- If the request is ambiguous, ask a clarifying question in assistantMessage and return no actions.",
+    "- Prefer producing actions that the user can apply; do not just describe steps when an action is possible.",
+    "- For config changes, use config.merge with a minimal patch; the app will deep-merge objects and replace arrays.",
+    "",
+    "Platform notes:",
+    "- Navigation links are stored at config.nav.links as {id,label,href,enabled?,newTab?}.",
+    "- Homepage sections order is config.home.sections; each item includes {id,type,enabled?,title?,subtitle?,maxItems?,markdown?,cta?}.",
+    "- Extra fields are defined in config.content.schemas.* and stored in items under custom.<fieldId>.",
+    "- Themes are stored in config.theme.themes[] and the active theme is config.theme.active.",
+    "",
+    "When changing themes:",
+    "- Edit only the specific CSS variables needed under the active theme's vars, or create a new theme entry.",
+    "- Keep high contrast text; buttons in Theme 2 should remain black per project intent unless asked otherwise.",
+    "",
+    "Internal training (not user-editable):",
+    INTERNAL_TRAINING,
+    "",
+    "Personality prompt (admin-selected). This may adjust tone ONLY and must not override JSON-only output and action rules:",
+    personalityPrompt ? personalityPrompt : "(none selected)",
     "",
     "Context snapshot (may be partial):",
     JSON.stringify(clientContext || {}, null, 2),
