@@ -20,6 +20,50 @@ const iconOptions = [
   { value: "Shuffle", label: "Shuffle" },
 ];
 
+const DEFAULT_THREE_SCRIPT = `const { THREE, scene, camera, renderer, canvas } = window.__three;
+
+const globe = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 64, 64),
+  new THREE.MeshStandardMaterial({ color: "#12b981", metalness: 0.2, roughness: 0.35 })
+);
+scene.add(globe);
+
+const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+scene.add(ambient);
+
+const light = new THREE.DirectionalLight(0xffffff, 0.9);
+light.position.set(3, 4, 5);
+scene.add(light);
+
+let dragging = false;
+let lastX = 0;
+let lastY = 0;
+canvas.addEventListener("pointerdown", (event) => {
+  dragging = true;
+  lastX = event.clientX;
+  lastY = event.clientY;
+});
+canvas.addEventListener("pointerup", () => {
+  dragging = false;
+});
+canvas.addEventListener("pointerleave", () => {
+  dragging = false;
+});
+canvas.addEventListener("pointermove", (event) => {
+  if (!dragging) return;
+  const dx = (event.clientX - lastX) * 0.01;
+  const dy = (event.clientY - lastY) * 0.01;
+  globe.rotation.y += dx;
+  globe.rotation.x += dy;
+  lastX = event.clientX;
+  lastY = event.clientY;
+});
+
+renderer.setAnimationLoop(() => {
+  globe.rotation.y += 0.0025;
+  renderer.render(scene, camera);
+});`;
+
 function slugify(input: string) {
   return input
     .trim()
@@ -148,6 +192,10 @@ function HomepageEditor() {
         base.title = "Get started";
         base.subtitle = "Describe the call to action.";
         base.cta = { primaryText: "Learn more", primaryHref: "/about" };
+      } else if (normalizedType.toLowerCase() === "embed3d") {
+        base.title = "3D module";
+        base.subtitle = "Add a 3D embed with custom code.";
+        base.embed = { mode: "threejs", script: DEFAULT_THREE_SCRIPT, height: 360 };
       } else if (["platforms", "news", "topics"].includes(normalizedType.toLowerCase())) {
         base.title = normalizedType[0].toUpperCase() + normalizedType.slice(1);
         base.maxItems = 6;
@@ -330,6 +378,7 @@ function HomepageEditor() {
                   <option value="newsletter">Add: Newsletter</option>
                   <option value="richText">Add: Rich text</option>
                   <option value="cta">Add: CTA</option>
+                  <option value="embed3d">Add: 3D embed</option>
                 </select>
                 <button
                   type="button"
@@ -347,6 +396,15 @@ function HomepageEditor() {
                 const isRichText = type.toLowerCase() === "richtext";
                 const isCta = type.toLowerCase() === "cta";
                 const needsCount = ["platforms", "news", "topics"].includes(type.toLowerCase());
+                const isEmbedSection = type.toLowerCase() === "embed3d";
+                const embed = (s as any).embed || {};
+                const embedMode = (embed.mode || "threejs") as "threejs" | "html";
+                const embedHeight = typeof embed.height === "number" ? embed.height : 360;
+                const embedHtml = typeof embed.html === "string" ? embed.html : "";
+                const embedScript = typeof embed.script === "string" ? embed.script : "";
+                const embedEnabled = isEmbedSection || Boolean(embedHtml || embedScript);
+                const updateEmbed = (patch: Record<string, unknown>) =>
+                  updateSection(idx, { embed: { ...(embed || {}), ...patch } } as any);
                 return (
                   <div key={s.id || idx} className="rounded-xl border border-white/10 bg-white/5 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -460,6 +518,76 @@ function HomepageEditor() {
                           />
                         </div>
                       ) : null}
+
+                      <div className="md:col-span-2 rounded-xl border border-white/10 bg-black/20 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-xs text-slate-300">3D embed</div>
+                          {!isEmbedSection ? (
+                            <label className="flex items-center gap-2 text-xs text-slate-200">
+                              <input
+                                type="checkbox"
+                                checked={embedEnabled}
+                                onChange={(e) =>
+                                  updateSection(idx, {
+                                    embed: e.target.checked ? { mode: "threejs", script: DEFAULT_THREE_SCRIPT, height: 360 } : undefined,
+                                  } as any)
+                                }
+                              />
+                              Enable embed
+                            </label>
+                          ) : null}
+                        </div>
+                        {embedEnabled ? (
+                          <div className="mt-3 grid gap-2 md:grid-cols-2">
+                            <select
+                              className="input-field"
+                              value={embedMode}
+                              onChange={(e) => updateEmbed({ mode: e.target.value })}
+                            >
+                              <option value="threejs">Three.js script</option>
+                              <option value="html">Custom HTML</option>
+                            </select>
+                            <input
+                              className="input-field"
+                              type="number"
+                              min={200}
+                              max={2000}
+                              placeholder="Height (px)"
+                              value={embedHeight}
+                              onChange={(e) => updateEmbed({ height: Number(e.target.value) || 360 })}
+                            />
+                            {embedMode === "html" ? (
+                              <textarea
+                                className="input-field md:col-span-2 min-h-[140px] font-mono text-xs"
+                                placeholder="Paste full HTML for the embed (3D, canvases, or any custom code)."
+                                value={embedHtml}
+                                onChange={(e) => updateEmbed({ html: e.target.value })}
+                              />
+                            ) : (
+                              <div className="md:col-span-2 grid gap-2">
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => updateEmbed({ script: DEFAULT_THREE_SCRIPT })}
+                                  >
+                                    Insert globe template
+                                  </button>
+                                  <span className="text-xs text-slate-400">Uses THREE, scene, camera, renderer, canvas from window.__three.</span>
+                                </div>
+                                <textarea
+                                  className="input-field min-h-[160px] font-mono text-xs"
+                                  placeholder="Write Three.js code. Use window.__three for the scene setup."
+                                  value={embedScript}
+                                  onChange={(e) => updateEmbed({ script: e.target.value })}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="mt-2 text-xs text-slate-400">Add a 3D embed to this section when you need custom visuals.</div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

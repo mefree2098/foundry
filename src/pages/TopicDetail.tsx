@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { NewsCard, PlatformCard } from "../components/Cards";
 import { ErrorState, Loading } from "../components/Loading";
 import SectionCard from "../components/SectionCard";
+import { EmbedBlock } from "../components/EmbedBlock";
 import { fetchNews, fetchPlatforms, fetchTopics } from "../lib/api";
 
 function TopicDetail() {
@@ -28,9 +29,15 @@ function TopicDetail() {
     enabled: Boolean(topicSlug),
   });
 
+  const embedHtml = typeof topic?.custom?.["embedHtml"] === "string" ? String(topic.custom?.["embedHtml"]) : "";
+  const embedHeightRaw = topic?.custom?.["embedHeight"];
+  const embedHeight = typeof embedHeightRaw === "number" ? embedHeightRaw : Number(embedHeightRaw) || undefined;
+  const embedConfig = embedHtml ? ({ mode: "html", html: embedHtml, height: embedHeight } as const) : undefined;
+
   return (
     <div className="space-y-6">
       <SectionCard title={topic ? topic.name : "Topic"}>
+        {embedConfig ? <EmbedBlock embed={embedConfig} className="mb-4" /> : null}
         {topic?.description ? (
           <p className="text-sm text-slate-200">{topic.description}</p>
         ) : (

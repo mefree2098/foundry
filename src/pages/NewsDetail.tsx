@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchNews, fetchPlatforms, fetchTopics } from "../lib/api";
 import SectionCard from "../components/SectionCard";
 import { SmartLinkButtons } from "../components/SmartLinkButtons";
+import { EmbedBlock } from "../components/EmbedBlock";
 
 function NewsDetail() {
   const { newsSlug } = useParams();
@@ -22,6 +23,11 @@ function NewsDetail() {
     );
   }
 
+  const embedHtml = typeof item.custom?.["embedHtml"] === "string" ? String(item.custom?.["embedHtml"]) : "";
+  const embedHeightRaw = item.custom?.["embedHeight"];
+  const embedHeight = typeof embedHeightRaw === "number" ? embedHeightRaw : Number(embedHeightRaw) || undefined;
+  const embedConfig = embedHtml ? ({ mode: "html", html: embedHtml, height: embedHeight } as const) : undefined;
+
   return (
     <div className="space-y-6">
       <SectionCard title={item.title}>
@@ -33,6 +39,7 @@ function NewsDetail() {
             loading="lazy"
           />
         )}
+        {embedConfig ? <EmbedBlock embed={embedConfig} className="mb-4" /> : null}
         <div className="text-sm text-slate-200">
           <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300">
             <span

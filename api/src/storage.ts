@@ -50,3 +50,42 @@ export async function getSasForBlob(filename: string, contentType: string) {
   const uploadUrl = `${blobUrl}?${sas}`;
   return { uploadUrl, blobUrl, expiresOn };
 }
+
+export async function listMediaBlobs(options?: { prefix?: string; limit?: number; continuationToken?: string }) {
+  const { blobService } = ensureStorage();
+  const container = blobService.getContainerClient(containerName);
+  await container.createIfNotExists({ access: "blob" });
+
+  const limit = Math.min(Math.max(options?.limit || 100, 1), 500);
+  const iterator = container
+    .listBlobsFlat({ prefix: options?.prefix })
+    .byPage({ continuationToken: options?.continuationToken, maxPageSize: limit });
+
+  const page = await iterator.next();
+  if (page.done || !page.value) return { items: [], continuationToken: undefined };
+
+  const items = page.value.segment.blobItems.map((item) => ({
+    name: item.name,
+    url: `${container.url}/${item.name}`,
+    contentType: item.properties.contentType,
+    size: item.properties.contentLength,
+    lastModified: item.properties.lastModified?.toISOString(),
+  }));
+  return { items, continuationToken: page.value.continuationToken };
+}
+
+export async function uploadBase64Image(options: { filename: string; base64: string; contentType: string }) {
+  const { blobService } = ensureStorage();
+  const container = blobService.getContainerClient(containerName);
+  await container.createIfNotExists({ access: "blob" });
+
+  const safeName = `${Date.now()}-${options.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+  const blobClient = container.getBlockBlobClient(safeName);
+  const buffer = Buffer.from(options.base64, "base64");
+
+  await blobClient.uploadData(buffer, {
+    blobHTTPHeaders: { blobContentType: options.contentType },
+  });
+
+  return { blobUrl: blobClient.url, name: safeName, size: buffer.length };
+}
