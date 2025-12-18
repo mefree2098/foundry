@@ -37,11 +37,37 @@ async function upsertConfig(req: HttpRequest, context: InvocationContext): Promi
     mergedEmailSettings.hasMailerLiteApiKey = true;
   }
 
+  const existingOpenAiKey = existing?.ai?.adminAssistant?.openai?.apiKey;
+  const incomingOpenAi = config.ai?.adminAssistant?.openai;
+  const wantsClearOpenAiKey = Boolean(incomingOpenAi?.clearApiKey);
+  const hasNewOpenAiKey = Boolean((incomingOpenAi?.apiKey || "").trim());
+  const mergedOpenAi = {
+    ...(existing?.ai?.adminAssistant?.openai || {}),
+    ...(incomingOpenAi || {}),
+    ...(wantsClearOpenAiKey ? { apiKey: undefined } : hasNewOpenAiKey ? {} : { apiKey: existingOpenAiKey }),
+  } as any;
+  delete mergedOpenAi.clearApiKey;
+  if (mergedOpenAi.apiKey) mergedOpenAi.hasApiKey = true;
+
+  const mergedAi =
+    config.ai || existing?.ai
+      ? {
+          ...(existing?.ai || {}),
+          ...(config.ai || {}),
+          adminAssistant: {
+            ...(existing?.ai?.adminAssistant || {}),
+            ...(config.ai?.adminAssistant || {}),
+            openai: mergedOpenAi,
+          },
+        }
+      : undefined;
+
   const nextConfig = {
     ...existing,
     ...config,
     id,
     emailSettings: mergedEmailSettings,
+    ai: mergedAi,
   };
 
   await container.items.upsert(nextConfig);
@@ -54,6 +80,23 @@ async function upsertConfig(req: HttpRequest, context: InvocationContext): Promi
       mailerLiteApiKey: undefined,
       hasMailerLiteApiKey: Boolean(nextConfig.emailSettings?.mailerLiteApiKey || nextConfig.emailSettings?.hasMailerLiteApiKey),
     },
+    ai: nextConfig.ai
+      ? {
+          ...nextConfig.ai,
+          adminAssistant: nextConfig.ai.adminAssistant
+            ? {
+                ...nextConfig.ai.adminAssistant,
+                openai: nextConfig.ai.adminAssistant.openai
+                  ? {
+                      ...nextConfig.ai.adminAssistant.openai,
+                      apiKey: undefined,
+                      hasApiKey: Boolean(nextConfig.ai.adminAssistant.openai.apiKey || nextConfig.ai.adminAssistant.openai.hasApiKey),
+                    }
+                  : undefined,
+              }
+            : undefined,
+        }
+      : undefined,
   };
 
   return { status: 200, body: JSON.stringify(safeResponse) };

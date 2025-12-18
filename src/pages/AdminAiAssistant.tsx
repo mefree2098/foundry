@@ -18,9 +18,6 @@ import {
   deleteTopic,
 } from "../lib/api";
 
-const LS_OPENAI_KEY = "ntr.admin.openai.apiKey";
-const LS_OPENAI_MODEL = "ntr.admin.openai.model";
-
 type Personality = { id: string; name: string; prompt: string };
 
 const PERSONALITY_PRESETS: Personality[] = [
@@ -109,22 +106,15 @@ function AdminAiAssistant() {
   const { data: topics = [] } = useQuery({ queryKey: ["topics"], queryFn: fetchTopics });
   const { data: news = [] } = useQuery({ queryKey: ["news", { all: true }], queryFn: () => fetchNews() });
 
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem(LS_OPENAI_KEY) || "");
-  const [model, setModel] = useState(() => localStorage.getItem(LS_OPENAI_MODEL) || "gpt-4o-mini");
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [model, setModel] = useState("gpt-4o-mini");
+  const [clearStoredKey, setClearStoredKey] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<AiChatMessage[]>([]);
   const [pendingActions, setPendingActions] = useState<AiChatAction[]>([]);
   const [personalities, setPersonalities] = useState<Personality[]>(PERSONALITY_PRESETS);
   const [activePersonalityId, setActivePersonalityId] = useState<string>(PERSONALITY_PRESETS[0]?.id || "professional");
   const [personalityDirty, setPersonalityDirty] = useState(false);
-
-  useEffect(() => {
-    localStorage.setItem(LS_OPENAI_KEY, apiKey);
-  }, [apiKey]);
-
-  useEffect(() => {
-    localStorage.setItem(LS_OPENAI_MODEL, model);
-  }, [model]);
 
   useEffect(() => {
     if (!config) return;
@@ -137,6 +127,14 @@ function AdminAiAssistant() {
     setActivePersonalityId(nextActive);
   }, [config, personalityDirty]);
 
+  useEffect(() => {
+    if (!config) return;
+    const cfgModel = config.ai?.adminAssistant?.openai?.model;
+    setModel((cfgModel && cfgModel.trim()) || "gpt-4o-mini");
+    setApiKeyDraft("");
+    setClearStoredKey(false);
+  }, [config]);
+
   const context = useMemo(() => {
     return {
       config,
@@ -147,9 +145,32 @@ function AdminAiAssistant() {
   }, [config, platforms, topics, news]);
 
   const chat = useMutation({
-    mutationFn: (payload: { apiKey: string; model: string; messages: AiChatMessage[] }) =>
-      aiChat({ ...payload, context }),
+    mutationFn: (payload: { messages: AiChatMessage[] }) =>
+      aiChat({ messages: payload.messages, context }),
     onError: (err: unknown) => alert(err instanceof Error ? err.message : "AI request failed"),
+  });
+
+  const hasStoredKey = Boolean(config?.ai?.adminAssistant?.openai?.hasApiKey);
+
+  const saveOpenAiSettings = useMutation({
+    mutationFn: async () => {
+      const base = config || ({ id: "global" } as any);
+      const openaiPatch: any = { model: model.trim() || "gpt-4o-mini" };
+      if (clearStoredKey) {
+        openaiPatch.clearApiKey = true;
+      } else if (apiKeyDraft.trim()) {
+        openaiPatch.apiKey = apiKeyDraft.trim();
+      }
+      const patch = { ai: { adminAssistant: { openai: openaiPatch } } };
+      const next = deepMerge(base, patch);
+      await saveConfig(next as any);
+    },
+    onSuccess: async () => {
+      setApiKeyDraft("");
+      setClearStoredKey(false);
+      await queryClient.invalidateQueries({ queryKey: ["config"] });
+    },
+    onError: (err: unknown) => alert(err instanceof Error ? err.message : "Failed to save OpenAI settings"),
   });
 
   const savePersonalityConfig = useMutation({
@@ -215,8 +236,8 @@ function AdminAiAssistant() {
   const send = async () => {
     const content = draft.trim();
     if (!content) return;
-    if (!apiKey.trim() || !model.trim()) {
-      alert("Enter an OpenAI API key and model first.");
+    if (!hasStoredKey) {
+      alert("No OpenAI API key saved yet. Save it under OpenAI settings first.");
       return;
     }
     const userMessage: AiChatMessage = { role: "user", content };
@@ -224,7 +245,7 @@ function AdminAiAssistant() {
     setMessages(nextMessages);
     setDraft("");
 
-    const res = await chat.mutateAsync({ apiKey: apiKey.trim(), model: model.trim(), messages: nextMessages });
+    const res = await chat.mutateAsync({ messages: nextMessages });
     const assistantMessage: AiChatMessage = { role: "assistant", content: res.assistantMessage };
     setMessages((prev) => [...prev, assistantMessage]);
     setPendingActions((res.actions || []).filter(Boolean));
@@ -233,6 +254,54 @@ function AdminAiAssistant() {
   return (
     <SectionCard title="Admin AI assistant (OpenAI)">
       <div className="space-y-4">
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-xs text-slate-300">OpenAI settings</div>
+              <div className="text-xs text-slate-400">
+                {hasStoredKey ? "API key is saved (hidden)." : "No API key saved yet."} Leave the key blank to keep the stored key.
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={saveOpenAiSettings.isPending}
+              onClick={() => saveOpenAiSettings.mutate()}
+            >
+              {saveOpenAiSettings.isPending ? "Saving..." : "Save OpenAI settings"}
+            </button>
+          </div>
+
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <input
+              className="input-field"
+              placeholder={hasStoredKey ? "•••••••••••••••• (stored, hidden)" : "OpenAI API key"}
+              value={apiKeyDraft}
+              onChange={(e) => setApiKeyDraft(e.target.value)}
+            />
+            <input className="input-field" placeholder="Model (e.g., gpt-4o-mini)" value={model} onChange={(e) => setModel(e.target.value)} />
+            <label className="md:col-span-2 flex items-center gap-2 text-xs text-slate-200">
+              <input
+                type="checkbox"
+                checked={clearStoredKey}
+                onChange={(e) => setClearStoredKey(e.target.checked)}
+                disabled={!hasStoredKey}
+              />
+              Clear stored API key
+            </label>
+            <div className="md:col-span-2 text-xs text-slate-300">
+              Model list:{" "}
+              <a className="underline text-slate-200" href="https://platform.openai.com/docs/models" target="_blank" rel="noreferrer">
+                platform.openai.com/docs/models
+              </a>{" "}
+              · Pricing:{" "}
+              <a className="underline text-slate-200" href="https://platform.openai.com/pricing" target="_blank" rel="noreferrer">
+                platform.openai.com/pricing
+              </a>
+            </div>
+          </div>
+        </div>
+
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -345,26 +414,6 @@ function AdminAiAssistant() {
               </div>
             );
           })()}
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-2">
-          <input
-            className="input-field"
-            placeholder="OpenAI API key (stored in this browser only)"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-          />
-          <input className="input-field" placeholder="Model (e.g., gpt-4o-mini)" value={model} onChange={(e) => setModel(e.target.value)} />
-          <div className="md:col-span-2 text-xs text-slate-300">
-            Model list:{" "}
-            <a className="underline text-slate-200" href="https://platform.openai.com/docs/models" target="_blank" rel="noreferrer">
-              platform.openai.com/docs/models
-            </a>{" "}
-            · Pricing:{" "}
-            <a className="underline text-slate-200" href="https://platform.openai.com/pricing" target="_blank" rel="noreferrer">
-              platform.openai.com/pricing
-            </a>
-          </div>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">

@@ -27,10 +27,27 @@ async function getConfig(_req: HttpRequest): Promise<HttpResponseInit> {
       ? { ...parsed.data.emailSettings, mailerLiteApiKey: undefined, hasMailerLiteApiKey }
       : undefined;
 
+    const hasOpenAiApiKey = Boolean(parsed.data.ai?.adminAssistant?.openai?.apiKey);
+    const sanitizedAi =
+      parsed.data.ai?.adminAssistant?.openai || parsed.data.ai?.adminAssistant?.personalities || parsed.data.ai?.adminAssistant?.activePersonalityId
+        ? {
+            ...(parsed.data.ai || {}),
+            adminAssistant: {
+              ...(parsed.data.ai?.adminAssistant || {}),
+              openai: {
+                ...(parsed.data.ai?.adminAssistant?.openai || {}),
+                apiKey: undefined,
+                clearApiKey: undefined,
+                hasApiKey: hasOpenAiApiKey,
+              },
+            },
+          }
+        : parsed.data.ai;
+
     return {
       status: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...parsed.data, emailSettings: sanitizedEmailSettings }),
+      body: JSON.stringify({ ...parsed.data, emailSettings: sanitizedEmailSettings, ai: sanitizedAi }),
     };
   } catch (_err) {
     // If not found or validation fails, fall back to a sensible default

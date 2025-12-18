@@ -44,8 +44,8 @@ const messageSchema = z.object({
 });
 
 const requestSchema = z.object({
-  apiKey: z.string().min(1),
-  model: z.string().min(1),
+  apiKey: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
   messages: z.array(messageSchema).min(1),
   context: z
     .object({
@@ -84,6 +84,8 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
   const { apiKey, model, messages, context: clientContext } = parsed.data;
 
   let personalityPrompt: string | undefined;
+  let storedOpenAiKey: string | undefined;
+  let storedOpenAiModel: string | undefined;
   try {
     const container = database.container(containers.config);
     const id = "global";
@@ -95,9 +97,19 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
       const activeId = (assistant?.activePersonalityId || "").trim();
       const active = personalities.find((p) => p.id === activeId) || personalities[0];
       personalityPrompt = active?.prompt;
+      storedOpenAiKey = assistant?.openai?.apiKey;
+      storedOpenAiModel = assistant?.openai?.model;
     }
   } catch {
     personalityPrompt = undefined;
+    storedOpenAiKey = undefined;
+    storedOpenAiModel = undefined;
+  }
+
+  const finalApiKey = (apiKey || storedOpenAiKey || "").trim();
+  const finalModel = (model || storedOpenAiModel || "gpt-4o-mini").trim();
+  if (!finalApiKey) {
+    return { status: 400, body: "OpenAI API key not configured. Save it under Admin → AI assistant settings." };
   }
 
   const systemPrompt = [
@@ -149,11 +161,11 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
   const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${finalApiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model,
+      model: finalModel,
       messages: openAiMessages,
       temperature: 0.2,
     }),

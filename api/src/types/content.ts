@@ -223,6 +223,14 @@ export const siteConfigSchema = z.object({
     .object({
       adminAssistant: z
         .object({
+          openai: z
+            .object({
+              model: z.string().optional(),
+              apiKey: z.string().optional(),
+              hasApiKey: z.boolean().optional(),
+              clearApiKey: z.boolean().optional(),
+            })
+            .optional(),
           activePersonalityId: z.string().optional(),
           personalities: z
             .array(

@@ -100,8 +100,8 @@ export type AiChatAction =
 export type AiChatResponse = { assistantMessage: string; actions?: AiChatAction[] };
 
 export const aiChat = (payload: {
-  apiKey: string;
-  model: string;
+  apiKey?: string;
+  model?: string;
   messages: AiChatMessage[];
   context?: unknown;
 }) => sendJson<AiChatResponse>("/ai/chat", "POST", payload);

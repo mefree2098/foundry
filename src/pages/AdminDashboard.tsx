@@ -437,6 +437,8 @@ function AdminDashboard() {
         {loginButtons}
       </SectionCard>
 
+      <AdminAiAssistant />
+
       <SectionCard title="Platforms">
         <div className="mb-4 grid gap-3 md:grid-cols-2">
           <select
@@ -958,7 +960,6 @@ function AdminDashboard() {
       </SectionCard>
 
       <ContentSchemaEditor />
-      <AdminAiAssistant />
       <ConfigEditor />
       <HomepageEditor />
       <AdminEmailSection />
