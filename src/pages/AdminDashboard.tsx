@@ -16,6 +16,7 @@ import {
   saveTopic,
 } from "../lib/api";
 import ConfigEditor from "./ConfigEditor";
+import HomepageEditor from "./HomepageEditor";
 import AdminEmailSection from "../components/AdminEmailSection";
 
 type LinkItem = { label: string; url: string };
@@ -838,6 +839,7 @@ function AdminDashboard() {
       </SectionCard>
 
       <ConfigEditor />
+      <HomepageEditor />
       <AdminEmailSection />
     </div>
   );

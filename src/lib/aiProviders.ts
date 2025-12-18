@@ -1,7 +1,7 @@
 export type AiProvider = {
   id: string;
   label: string;
-  icon: string; // SimpleIcons CDN URL
+  icon?: string; // SimpleIcons slug or URL
 };
 
 // SimpleIcons CDN: https://cdn.simpleicons.org/<slug>
@@ -14,4 +14,3 @@ export const AI_PROVIDERS: AiProvider[] = [
   { id: "mistralai", label: "Mistral", icon: "https://cdn.simpleicons.org/mistralai" },
   { id: "cohere", label: "Cohere", icon: "https://cdn.simpleicons.org/cohere" },
 ];
-

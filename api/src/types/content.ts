@@ -145,6 +145,42 @@ export const siteConfigSchema = z.object({
       googleAnalyticsId: z.string().optional(),
     })
     .optional(),
+  home: z
+    .object({
+      trustSection: z
+        .object({
+          title: z.string().optional(),
+          cards: z
+            .array(
+              z.object({
+                id: z.string().min(1),
+                title: z.string().min(1),
+                body: z.string().min(1),
+                icon: z.string().optional(),
+                iconColor: z.string().optional(),
+              }),
+            )
+            .optional(),
+        })
+        .optional(),
+      aiSection: z
+        .object({
+          title: z.string().optional(),
+          subtitle: z.string().optional(),
+          footnote: z.string().optional(),
+          providers: z
+            .array(
+              z.object({
+                id: z.string().min(1),
+                label: z.string().min(1),
+                icon: z.string().optional(),
+              }),
+            )
+            .optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   emailSettings: emailSettingsSchema.optional(),
 });
 export type SiteConfig = z.infer<typeof siteConfigSchema>;

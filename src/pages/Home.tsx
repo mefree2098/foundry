@@ -7,6 +7,15 @@ import SectionCard from "../components/SectionCard";
 import { fetchConfig, fetchNews, fetchPlatforms, fetchTopics } from "../lib/api";
 import { KeyRound, ShieldCheck, Shuffle } from "lucide-react";
 
+const trustIconMap = {
+  key: KeyRound,
+  shield: ShieldCheck,
+  shuffle: Shuffle,
+  KeyRound,
+  ShieldCheck,
+  Shuffle,
+} as const;
+
 function Home() {
   const queryClient = useQueryClient();
   const cachedPlatforms = queryClient.getQueryData(["platforms"]) as Awaited<ReturnType<typeof fetchPlatforms>> | undefined;
@@ -95,39 +104,54 @@ function Home() {
         </SectionCard>
       )}
 
-      <SectionCard title="Trust & control">
+      <SectionCard title={config?.home?.trustSection?.title || "Trust & control"}>
         <div className="grid gap-4 md:grid-cols-3">
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-50">
-              <KeyRound className="h-4 w-4 text-ntr-magenta" />
-              Bring your own AI
-            </div>
-            <p className="mt-2 text-sm text-slate-200">
-              Use the AI provider your organization prefers by supplying your own API key (no custom models, no lock-in).
-            </p>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-50">
-              <ShieldCheck className="h-4 w-4 text-ntr-emerald-bright" />
-              Keep control of data
-            </div>
-            <p className="mt-2 text-sm text-slate-200">
-              Platforms are designed to fit your workflows while keeping your systems and policies at the center.
-            </p>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-50">
-              <Shuffle className="h-4 w-4 text-ntr-magenta" />
-              Switch when you need to
-            </div>
-            <p className="mt-2 text-sm text-slate-200">
-              Change providers as capabilities and pricing evolve-without rewriting the business platform around it.
-            </p>
-          </div>
+          {(config?.home?.trustSection?.cards?.length
+            ? config.home.trustSection.cards
+            : [
+                {
+                  id: "bring-your-own-ai",
+                  title: "Bring your own AI",
+                  body: "Use the AI provider your organization prefers by supplying your own API key (no custom models, no lock-in).",
+                  icon: "key",
+                  iconColor: "var(--color-accent)",
+                },
+                {
+                  id: "keep-control-of-data",
+                  title: "Keep control of data",
+                  body: "Platforms are designed to fit your workflows while keeping your systems and policies at the center.",
+                  icon: "shield",
+                  iconColor: "var(--color-secondary)",
+                },
+                {
+                  id: "switch-when-you-need-to",
+                  title: "Switch when you need to",
+                  body: "Change providers as capabilities and pricing evolve-without rewriting the business platform around it.",
+                  icon: "shuffle",
+                  iconColor: "var(--color-accent)",
+                },
+              ]
+          ).map((card) => {
+            const Icon = (card.icon && (trustIconMap as any)[card.icon]) || undefined;
+            return (
+              <div key={card.id} className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-50">
+                  {Icon ? <Icon className="h-4 w-4" style={card.iconColor ? { color: card.iconColor } : undefined} /> : null}
+                  {card.title}
+                </div>
+                <p className="mt-2 text-sm text-slate-200">{card.body}</p>
+              </div>
+            );
+          })}
         </div>
       </SectionCard>
 
-      <AiProviders />
+      <AiProviders
+        title={config?.home?.aiSection?.title}
+        subtitle={config?.home?.aiSection?.subtitle}
+        footnote={config?.home?.aiSection?.footnote}
+        providers={config?.home?.aiSection?.providers}
+      />
 
       <SectionCard title="Featured platforms">
         {platformsLoading ? (
