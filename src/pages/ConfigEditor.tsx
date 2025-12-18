@@ -37,21 +37,49 @@ const themeVars: ThemeVar[] = [
   { key: "--color-accent", label: "Accent", kind: "color" },
   { key: "--panel-grad-from", label: "Panel gradient from", kind: "color" },
   { key: "--panel-grad-to", label: "Panel gradient to", kind: "color" },
-  { key: "--panel-border", label: "Panel border", kind: "text" },
+  { key: "--panel-border", label: "Panel border", kind: "color" },
   { key: "--btn-primary-bg", label: "Primary button bg", kind: "color" },
+  { key: "--btn-primary-bg-hover", label: "Primary button bg hover", kind: "color" },
   { key: "--btn-primary-text", label: "Primary button text", kind: "color" },
-  { key: "--btn-primary-border", label: "Primary button border", kind: "text" },
-  { key: "--btn-secondary-bg", label: "Secondary button bg", kind: "text" },
+  { key: "--btn-primary-border", label: "Primary button border", kind: "color" },
+  { key: "--btn-secondary-bg", label: "Secondary button bg", kind: "color" },
+  { key: "--btn-secondary-bg-hover", label: "Secondary button bg hover", kind: "color" },
   { key: "--btn-secondary-text", label: "Secondary button text", kind: "color" },
-  { key: "--input-bg", label: "Input bg", kind: "text" },
-  { key: "--input-border", label: "Input border", kind: "text" },
-  { key: "--input-focus-ring", label: "Input focus ring", kind: "text" },
+  { key: "--btn-secondary-border", label: "Secondary button border", kind: "color" },
+  { key: "--input-bg", label: "Input bg", kind: "color" },
+  { key: "--input-border", label: "Input border", kind: "color" },
+  { key: "--input-text", label: "Input text", kind: "color" },
+  { key: "--input-placeholder", label: "Input placeholder", kind: "color" },
+  { key: "--input-focus-ring", label: "Input focus ring", kind: "color" },
   { key: "--dropdown-bg", label: "Dropdown bg", kind: "color" },
   { key: "--dropdown-text", label: "Dropdown text", kind: "color" },
 ];
 
 function isHexColor(value: string) {
   return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value.trim());
+}
+
+function clamp255(n: number) {
+  if (Number.isNaN(n)) return 0;
+  return Math.max(0, Math.min(255, Math.round(n)));
+}
+
+function toHexByte(n: number) {
+  return clamp255(n).toString(16).padStart(2, "0");
+}
+
+function parseCssColorToHex(value: string): string | null {
+  const v = (value || "").trim();
+  if (!v) return null;
+  if (isHexColor(v)) return v.toLowerCase();
+  const hex6 = /^#([0-9a-f]{6})([0-9a-f]{2})$/i.exec(v);
+  if (hex6) return `#${hex6[1].toLowerCase()}`;
+  const rgb = /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i.exec(v);
+  if (rgb) return `#${toHexByte(Number(rgb[1]))}${toHexByte(Number(rgb[2]))}${toHexByte(Number(rgb[3]))}`;
+  const rgba =
+    /^rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(0|0?\.\d+|1(\.0+)?)\s*\)$/i.exec(v);
+  if (rgba) return `#${toHexByte(Number(rgba[1]))}${toHexByte(Number(rgba[2]))}${toHexByte(Number(rgba[3]))}`;
+  return null;
 }
 
 function slugify(input: string) {
@@ -342,13 +370,14 @@ function ConfigEditor() {
               {themeVars.map((v) => {
                 const val = (selected.vars && selected.vars[v.key]) || "";
                 const effective = val || baseVars[v.key] || "";
-                const showColor = v.kind === "color" && isHexColor(effective);
-                const colorValue = isHexColor(val) ? val : isHexColor(effective) ? effective : "#000000";
+                const showColorPicker = v.kind === "color";
+                const colorValue =
+                  parseCssColorToHex(val) || parseCssColorToHex(effective) || "#000000";
                 return (
                   <label key={v.key} className="grid gap-1">
                     <span className="text-xs text-slate-300">{v.label}</span>
                     <div className="flex items-center gap-2">
-                      {showColor ? (
+                      {showColorPicker ? (
                         <input
                           type="color"
                           value={colorValue}
@@ -368,7 +397,7 @@ function ConfigEditor() {
               })}
             </div>
             <p className="mt-3 text-xs text-slate-400">
-              Tip: For color pickers, enter a hex value like <code className="text-slate-200">#00ff99</code>. For gradients/rgba, use the text box.
+              Tip: Use the picker for quick selection; use the text box for precise values (hex/rgba/var()).
             </p>
           </div>
 
