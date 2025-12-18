@@ -125,6 +125,14 @@ const homeSectionSchema = z
         secondaryHref: z.string().optional(),
       })
       .optional(),
+    embed: z
+      .object({
+        mode: z.enum(["html", "threejs"]).optional(),
+        html: z.string().optional(),
+        script: z.string().optional(),
+        height: z.number().int().positive().max(2000).optional(),
+      })
+      .optional(),
   })
   .passthrough();
 
@@ -227,6 +235,11 @@ export const siteConfigSchema = z.object({
           openai: z
             .object({
               model: z.string().optional(),
+              imageModel: z.string().optional(),
+              imageSize: z.string().optional(),
+              imageQuality: z.string().optional(),
+              imageBackground: z.string().optional(),
+              imageOutputFormat: z.string().optional(),
               apiKey: z.string().optional(),
               hasApiKey: z.boolean().optional(),
               clearApiKey: z.boolean().optional(),
@@ -239,6 +252,21 @@ export const siteConfigSchema = z.object({
                 id: z.string().min(1),
                 name: z.string().min(1),
                 prompt: z.string().optional(),
+              }),
+            )
+            .optional(),
+        })
+        .optional(),
+      pricing: z
+        .object({
+          source: z.string().optional(),
+          updatedAt: z.string().optional(),
+          models: z
+            .record(
+              z.string(),
+              z.object({
+                inputUsdPerMillion: z.number().nonnegative(),
+                outputUsdPerMillion: z.number().nonnegative(),
               }),
             )
             .optional(),

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import SectionCard from "./SectionCard";
 import { AI_PROVIDERS, type AiProvider } from "../lib/aiProviders";
 
@@ -6,6 +7,7 @@ type AiProvidersProps = {
   subtitle?: string;
   footnote?: string;
   providers?: AiProvider[];
+  embed?: ReactNode;
 };
 
 function isHttpUrl(value: string) {
@@ -20,10 +22,11 @@ function iconToUrl(icon: string | undefined) {
   return `https://cdn.simpleicons.org/${encodeURIComponent(trimmed)}`;
 }
 
-function AiProviders({ title = "Bring your own AI", subtitle, footnote, providers }: AiProvidersProps) {
+function AiProviders({ title = "Bring your own AI", subtitle, footnote, providers, embed }: AiProvidersProps) {
   const list = providers && providers.length ? providers : AI_PROVIDERS;
   return (
     <SectionCard title={title}>
+      {embed}
       <p className="text-sm text-slate-200">
         {subtitle ||
           "Foundry sites are AI-friendly by design, but we avoid lock-in. Use the AI provider your organization prefers by supplying your own API key."}

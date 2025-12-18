@@ -4,6 +4,7 @@ import Hero from "../components/Hero";
 import AiProviders from "../components/AiProviders";
 import NewsletterCTA from "../components/NewsletterCTA";
 import SectionCard from "../components/SectionCard";
+import { EmbedBlock } from "../components/EmbedBlock";
 import { fetchConfig, fetchNews, fetchPlatforms, fetchTopics } from "../lib/api";
 import { KeyRound, ShieldCheck, Shuffle } from "lucide-react";
 
@@ -125,6 +126,8 @@ function Home() {
         const title = typeof section.title === "string" ? section.title : undefined;
         const subtitle = typeof section.subtitle === "string" ? section.subtitle : undefined;
         const maxItems = typeof section.maxItems === "number" ? section.maxItems : undefined;
+        const embed = section.embed as any;
+        const embedBlock = embed ? <EmbedBlock embed={embed} className="mb-4" /> : null;
 
         if (type === "trust") {
           const trustTitle = title || config?.home?.trustSection?.title || "Trust & control";
@@ -156,6 +159,7 @@ function Home() {
                 ];
           return (
             <SectionCard key={section.id} title={trustTitle}>
+              {embedBlock}
               <div className="grid gap-4 md:grid-cols-3">
                 {cards.map((card) => {
                   const Icon = (card.icon && (trustIconMap as any)[card.icon]) || undefined;
@@ -184,6 +188,7 @@ function Home() {
               subtitle={subtitle || config?.home?.aiSection?.subtitle}
               footnote={config?.home?.aiSection?.footnote}
               providers={config?.home?.aiSection?.providers}
+              embed={embedBlock}
             />
           );
         }
@@ -192,6 +197,7 @@ function Home() {
           const list = featuredPlatforms.slice(0, maxItems || 6);
           return (
             <SectionCard key={section.id} title={title || "Featured platforms"}>
+              {embedBlock}
               {platformsLoading ? (
                 <div>Loading platforms.</div>
               ) : (
@@ -210,6 +216,7 @@ function Home() {
           const list = sortedNews.slice(0, maxItems || 6);
           return (
             <SectionCard key={section.id} title={title || "Latest news"}>
+              {embedBlock}
               {newsLoading ? (
                 <div>Loading news.</div>
               ) : (
@@ -228,6 +235,7 @@ function Home() {
           const list = featuredTopics.slice(0, maxItems || 6);
           return (
             <SectionCard key={section.id} title={title || "Explore by topic"}>
+              {embedBlock}
               {topicsLoading ? (
                 <div>Loading topics.</div>
               ) : (
@@ -246,6 +254,7 @@ function Home() {
           const markdown = typeof section.markdown === "string" ? section.markdown : "";
           return (
             <SectionCard key={section.id} title={title || "Section"}>
+              {embedBlock}
               {subtitle ? <div className="mb-2 text-sm text-slate-300">{subtitle}</div> : null}
               <div className="whitespace-pre-line text-sm text-slate-200">{markdown}</div>
             </SectionCard>
@@ -260,6 +269,7 @@ function Home() {
           const secondaryHref = (cta.secondaryHref as string | undefined) || "";
           return (
             <SectionCard key={section.id} title={title || "Get started"}>
+              {embedBlock}
               {subtitle ? <div className="mb-3 text-sm text-slate-200">{subtitle}</div> : null}
               <div className="flex flex-wrap gap-3">
                 <a className="btn btn-primary" href={primaryHref}>
@@ -276,7 +286,21 @@ function Home() {
         }
 
         if (type === "newsletter") {
-          return <NewsletterCTA key={section.id} />;
+          return (
+            <div key={section.id}>
+              {embedBlock}
+              <NewsletterCTA />
+            </div>
+          );
+        }
+
+        if (type === "embed3d") {
+          return (
+            <SectionCard key={section.id} title={title || "3D module"}>
+              {subtitle ? <div className="mb-2 text-sm text-slate-300">{subtitle}</div> : null}
+              <EmbedBlock embed={embed} />
+            </SectionCard>
+          );
         }
 
         return null;

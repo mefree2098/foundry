@@ -60,6 +60,32 @@ export const saveConfig = (payload: SiteConfig) => sendJson<SiteConfig>("/config
 export const requestUploadSas = (filename: string, contentType: string) =>
   sendJson<{ uploadUrl: string; blobUrl: string; expiresOn: string }>("/media/sas", "POST", { filename, contentType });
 
+export const fetchMediaList = (params?: { prefix?: string; limit?: number; continuationToken?: string }) => {
+  const search = new URLSearchParams();
+  if (params?.prefix) search.set("prefix", params.prefix);
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.continuationToken) search.set("continuationToken", params.continuationToken);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return getJson<{ items: { name: string; url: string; contentType?: string; size?: number; lastModified?: string }[]; continuationToken?: string }>(
+    `/media/list${suffix}`,
+  );
+};
+
+export const generateImage = (payload: {
+  prompt: string;
+  model?: string;
+  size?: string;
+  quality?: "low" | "medium" | "high" | "auto";
+  background?: "transparent" | "opaque" | "auto";
+  outputFormat?: "png" | "jpeg" | "webp";
+  filenameHint?: string;
+}) =>
+  sendJson<{ blobUrl: string; name: string; model: string; usage?: { promptTokens: number; completionTokens: number; totalTokens: number } }>(
+    "/ai/image-generate",
+    "POST",
+    payload,
+  );
+
 export const subscribe = (payload: { email: string; subscribeAll?: boolean; platformIds?: string[] }) =>
   sendJson<{ ok: boolean }>("/subscriptions", "POST", payload);
 
@@ -87,6 +113,32 @@ export const fetchEmailStats = () =>
     lastError?: string;
   }>("/email/stats");
 
+export const fetchAiUsage = () =>
+  getJson<{
+    updatedAt?: string;
+    pricing: { source: string; updatedAt?: string; models: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> };
+    allTime: {
+      models: { models: Record<string, any>; totals: any };
+      images: { models: Record<string, any>; totals: any };
+    };
+    last30Days: {
+      models: { models: Record<string, any>; totals: any };
+      images: { models: Record<string, any>; totals: any };
+    };
+  }>("/ai/usage");
+
+export const refreshAiPricing = (payload?: { pricingText?: string; models?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> }) =>
+  sendJson<{ source?: string; updatedAt?: string; models?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> }>(
+    "/ai/pricing/refresh",
+    "POST",
+    payload,
+  );
+
+export const fetchAiPricing = () =>
+  getJson<{ source?: string; updatedAt?: string; models?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> }>(
+    "/ai/pricing",
+  );
+
 export type AiChatMessage = { role: "user" | "assistant"; content: string };
 export type AiChatAction =
   | { type: "config.merge"; value: unknown }
@@ -95,7 +147,19 @@ export type AiChatAction =
   | { type: "news.upsert"; value: unknown }
   | { type: "platform.delete"; id: string }
   | { type: "topic.delete"; id: string }
-  | { type: "news.delete"; id: string };
+  | { type: "news.delete"; id: string }
+  | {
+      type: "media.generate";
+      value: {
+        prompt: string;
+        targetType: "platform" | "news" | "config";
+        targetId?: string;
+        field: string;
+        size?: string;
+        quality?: "low" | "medium" | "high" | "auto";
+        background?: "transparent" | "opaque" | "auto";
+      };
+    };
 
 export type AiChatResponse = { assistantMessage: string; actions?: AiChatAction[] };
 

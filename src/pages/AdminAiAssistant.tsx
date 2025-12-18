@@ -9,6 +9,7 @@ import {
   fetchNews,
   fetchPlatforms,
   fetchTopics,
+  generateImage,
   saveConfig,
   saveNews,
   savePlatform,
@@ -99,6 +100,39 @@ function deepMerge<T>(base: T, patch: unknown): T {
   return out as T;
 }
 
+function setNestedValue<T extends Record<string, any>>(base: T, path: string, value: unknown): T {
+  const parts = path.split(".").filter(Boolean);
+  if (!parts.length) return base;
+  const next: Record<string, any> = Array.isArray(base) ? [...base] : { ...base };
+  let cursor: Record<string, any> = next;
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    const key = parts[i];
+    const existing = cursor[key];
+    cursor[key] = isPlainObject(existing) ? { ...existing } : {};
+    cursor = cursor[key];
+  }
+  cursor[parts[parts.length - 1]] = value;
+  return next as T;
+}
+
+type LinkItem = { label?: string; url?: string; href?: string };
+
+function normalizeLinks(value: unknown) {
+  if (!value) return undefined;
+  if (Array.isArray(value)) {
+    const pairs = value
+      .map((item) => item as LinkItem)
+      .map((item) => ({
+        label: (item.label || "").trim(),
+        url: (item.url || item.href || "").trim(),
+      }))
+      .filter((item) => item.label && item.url);
+    return pairs.length ? Object.fromEntries(pairs.map((item) => [item.label, item.url])) : undefined;
+  }
+  if (typeof value === "object") return value;
+  return undefined;
+}
+
 function AdminAiAssistant() {
   const queryClient = useQueryClient();
   const { data: config } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
@@ -108,6 +142,11 @@ function AdminAiAssistant() {
 
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [model, setModel] = useState("gpt-4o-mini");
+  const [imageModel, setImageModel] = useState("gpt-image-1.5");
+  const [imageSize, setImageSize] = useState("1024x1024");
+  const [imageQuality, setImageQuality] = useState<"low" | "medium" | "high" | "auto">("auto");
+  const [imageBackground, setImageBackground] = useState<"transparent" | "opaque" | "auto">("auto");
+  const [imageOutputFormat, setImageOutputFormat] = useState<"png" | "jpeg" | "webp">("png");
   const [clearStoredKey, setClearStoredKey] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<AiChatMessage[]>([]);
@@ -130,7 +169,17 @@ function AdminAiAssistant() {
   useEffect(() => {
     if (!config) return;
     const cfgModel = config.ai?.adminAssistant?.openai?.model;
+    const cfgImageModel = config.ai?.adminAssistant?.openai?.imageModel;
+    const cfgImageSize = config.ai?.adminAssistant?.openai?.imageSize;
+    const cfgImageQuality = config.ai?.adminAssistant?.openai?.imageQuality;
+    const cfgImageBackground = config.ai?.adminAssistant?.openai?.imageBackground;
+    const cfgImageOutputFormat = config.ai?.adminAssistant?.openai?.imageOutputFormat;
     setModel((cfgModel && cfgModel.trim()) || "gpt-4o-mini");
+    setImageModel((cfgImageModel && cfgImageModel.trim()) || "gpt-image-1.5");
+    setImageSize((cfgImageSize && cfgImageSize.trim()) || "1024x1024");
+    setImageQuality((cfgImageQuality as any) || "auto");
+    setImageBackground((cfgImageBackground as any) || "auto");
+    setImageOutputFormat((cfgImageOutputFormat as any) || "png");
     setApiKeyDraft("");
     setClearStoredKey(false);
   }, [config]);
@@ -155,7 +204,14 @@ function AdminAiAssistant() {
   const saveOpenAiSettings = useMutation({
     mutationFn: async () => {
       const base = config || ({ id: "global" } as any);
-      const openaiPatch: any = { model: model.trim() || "gpt-4o-mini" };
+      const openaiPatch: any = {
+        model: model.trim() || "gpt-4o-mini",
+        imageModel: imageModel.trim() || "gpt-image-1.5",
+        imageSize: imageSize.trim() || "1024x1024",
+        imageQuality,
+        imageBackground,
+        imageOutputFormat,
+      };
       if (clearStoredKey) {
         openaiPatch.clearApiKey = true;
       } else if (apiKeyDraft.trim()) {
@@ -197,7 +253,9 @@ function AdminAiAssistant() {
           continue;
         }
         if (action.type === "platform.upsert") {
-          await savePlatform(action.value as any);
+          const payload = { ...(action.value as any) };
+          payload.links = normalizeLinks(payload.links);
+          await savePlatform(payload as any);
           continue;
         }
         if (action.type === "topic.upsert") {
@@ -205,7 +263,9 @@ function AdminAiAssistant() {
           continue;
         }
         if (action.type === "news.upsert") {
-          await saveNews(action.value as any);
+          const payload = { ...(action.value as any) };
+          payload.links = normalizeLinks(payload.links);
+          await saveNews(payload as any);
           continue;
         }
         if (action.type === "platform.delete") {
@@ -219,6 +279,41 @@ function AdminAiAssistant() {
         if (action.type === "news.delete") {
           await deleteNews(action.id);
           continue;
+        }
+        if (action.type === "media.generate") {
+          const payload = action.value || ({} as any);
+          const prompt = String(payload.prompt || "").trim();
+          if (!prompt) throw new Error("Missing image prompt.");
+          if (!confirm(`Generate image with OpenAI and update ${payload.targetType}?`)) continue;
+          const result = await generateImage({
+            prompt,
+            size: payload.size,
+            quality: payload.quality,
+            background: payload.background,
+            filenameHint: payload.targetId || payload.targetType,
+          });
+          const field = String(payload.field || "").trim();
+          if (!field) throw new Error("Missing target field for image placement.");
+          if (payload.targetType === "config") {
+            const base = config || ({ id: "global" } as any);
+            const next = setNestedValue(base, field, result.blobUrl);
+            await saveConfig(next as any);
+            continue;
+          }
+          if (payload.targetType === "platform") {
+            const existing = platforms.find((p) => p.id === payload.targetId);
+            if (!existing) throw new Error(`Platform ${payload.targetId} not found`);
+            const next = setNestedValue({ ...(existing as any) }, field, result.blobUrl);
+            await savePlatform(next as any);
+            continue;
+          }
+          if (payload.targetType === "news") {
+            const existing = news.find((n) => n.id === payload.targetId);
+            if (!existing) throw new Error(`News ${payload.targetId} not found`);
+            const next = setNestedValue({ ...(existing as any) }, field, result.blobUrl);
+            await saveNews(next as any);
+            continue;
+          }
         }
       }
     },
@@ -280,6 +375,34 @@ function AdminAiAssistant() {
               onChange={(e) => setApiKeyDraft(e.target.value)}
             />
             <input className="input-field" placeholder="Model (e.g., gpt-4o-mini)" value={model} onChange={(e) => setModel(e.target.value)} />
+            <input
+              className="input-field"
+              placeholder="Image model (e.g., gpt-image-1.5)"
+              value={imageModel}
+              onChange={(e) => setImageModel(e.target.value)}
+            />
+            <input
+              className="input-field"
+              placeholder="Image size (e.g., 1024x1024)"
+              value={imageSize}
+              onChange={(e) => setImageSize(e.target.value)}
+            />
+            <select className="input-field" value={imageQuality} onChange={(e) => setImageQuality(e.target.value as any)}>
+              <option value="auto">Image quality: auto</option>
+              <option value="low">Image quality: low</option>
+              <option value="medium">Image quality: medium</option>
+              <option value="high">Image quality: high</option>
+            </select>
+            <select className="input-field" value={imageBackground} onChange={(e) => setImageBackground(e.target.value as any)}>
+              <option value="auto">Background: auto</option>
+              <option value="transparent">Background: transparent</option>
+              <option value="opaque">Background: opaque</option>
+            </select>
+            <select className="input-field" value={imageOutputFormat} onChange={(e) => setImageOutputFormat(e.target.value as any)}>
+              <option value="png">Output format: png</option>
+              <option value="jpeg">Output format: jpeg</option>
+              <option value="webp">Output format: webp</option>
+            </select>
             <label className="md:col-span-2 flex items-center gap-2 text-xs text-slate-200">
               <input
                 type="checkbox"

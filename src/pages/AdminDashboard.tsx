@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import SectionCard from "../components/SectionCard";
 import { useAuth } from "../hooks/useAuth";
@@ -8,10 +8,14 @@ import {
   deletePlatform,
   deleteTopic,
   fetchConfig,
+  fetchAiUsage,
   fetchNews,
   fetchPlatforms,
   fetchTopics,
+  generateImage,
+  refreshAiPricing,
   requestUploadSas,
+  saveConfig,
   saveNews,
   savePlatform,
   saveTopic,
@@ -22,6 +26,7 @@ import AdminEmailSection from "../components/AdminEmailSection";
 import ContentSchemaEditor from "./ContentSchemaEditor";
 import type { SiteConfig } from "../lib/types";
 import AdminAiAssistant from "./AdminAiAssistant";
+import { MediaPicker } from "../components/MediaPicker";
 
 type LinkItem = { label: string; url: string };
 
@@ -213,6 +218,35 @@ function AdminDashboard() {
   const [topicForm, setTopicForm] = useState<TopicForm>(defaultTopic);
   const [newsForm, setNewsForm] = useState<NewsForm>(defaultNews);
   const [uploading, setUploading] = useState<null | "platformHero" | "newsImage">(null);
+  const [generating, setGenerating] = useState<null | "platformHero" | "newsImage">(null);
+  const [mediaPicker, setMediaPicker] = useState<null | "platformHero" | "newsImage">(null);
+  const [pricingRows, setPricingRows] = useState<{ model: string; inputUsd: string; outputUsd: string }[]>([]);
+  const [pricingDirty, setPricingDirty] = useState(false);
+  const [pricingImportText, setPricingImportText] = useState("");
+
+  const {
+    data: aiUsage,
+    isLoading: aiUsageLoading,
+    isError: aiUsageError,
+    isFetching: aiUsageFetching,
+    refetch: refetchAiUsage,
+  } = useQuery({
+    queryKey: ["ai-usage"],
+    queryFn: fetchAiUsage,
+  });
+
+  useEffect(() => {
+    if (!config || pricingDirty) return;
+    const models = config.ai?.pricing?.models || {};
+    const rows = Object.entries(models)
+      .map(([model, price]) => ({
+        model,
+        inputUsd: String(price.inputUsdPerMillion ?? ""),
+        outputUsd: String(price.outputUsdPerMillion ?? ""),
+      }))
+      .sort((a, b) => a.model.localeCompare(b.model));
+    setPricingRows(rows);
+  }, [config, pricingDirty]);
 
   const platformSave = useMutation({
     mutationFn: savePlatform,
@@ -240,6 +274,50 @@ function AdminDashboard() {
       setNewsForm(defaultNews);
     },
     onError: (err: unknown) => alert(err instanceof Error ? err.message : "Failed to save news"),
+  });
+
+  const refreshPricing = useMutation({
+    mutationFn: (payload?: { pricingText?: string }) => refreshAiPricing(payload),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ["config"] });
+      await queryClient.invalidateQueries({ queryKey: ["ai-usage"] });
+      setPricingDirty(false);
+      if (variables?.pricingText) setPricingImportText("");
+    },
+    onError: (err: unknown) => alert(err instanceof Error ? err.message : "Failed to refresh pricing"),
+  });
+
+  const savePricing = useMutation({
+    mutationFn: async () => {
+      const base = config || ({ id: "global" } as SiteConfig);
+      const models: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> = {};
+      for (const row of pricingRows) {
+        const model = row.model.trim();
+        if (!model) continue;
+        const input = Number(row.inputUsd);
+        const output = Number(row.outputUsd);
+        if (!Number.isFinite(input) || !Number.isFinite(output)) continue;
+        models[model] = { inputUsdPerMillion: input, outputUsdPerMillion: output };
+      }
+      const next: SiteConfig = {
+        ...base,
+        ai: {
+          ...(base.ai || {}),
+          pricing: {
+            source: "manual",
+            updatedAt: new Date().toISOString(),
+            models,
+          },
+        },
+      } as SiteConfig;
+      await saveConfig(next);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["config"] });
+      await queryClient.invalidateQueries({ queryKey: ["ai-usage"] });
+      setPricingDirty(false);
+    },
+    onError: (err: unknown) => alert(err instanceof Error ? err.message : "Failed to save pricing"),
   });
 
   const platformDelete = useMutation({
@@ -429,6 +507,76 @@ function AdminDashboard() {
     );
   }
 
+  const platformEmbedHtml = typeof platformForm.custom?.embedHtml === "string" ? platformForm.custom.embedHtml : "";
+  const platformEmbedHeightRaw = platformForm.custom?.embedHeight;
+  const platformEmbedHeight =
+    typeof platformEmbedHeightRaw === "number" ? platformEmbedHeightRaw : Number(platformEmbedHeightRaw) || 360;
+
+  const newsEmbedHtml = typeof newsForm.custom?.embedHtml === "string" ? newsForm.custom.embedHtml : "";
+  const newsEmbedHeightRaw = newsForm.custom?.embedHeight;
+  const newsEmbedHeight = typeof newsEmbedHeightRaw === "number" ? newsEmbedHeightRaw : Number(newsEmbedHeightRaw) || 360;
+
+  const topicEmbedHtml = typeof topicForm.custom?.embedHtml === "string" ? topicForm.custom.embedHtml : "";
+  const topicEmbedHeightRaw = topicForm.custom?.embedHeight;
+  const topicEmbedHeight = typeof topicEmbedHeightRaw === "number" ? topicEmbedHeightRaw : Number(topicEmbedHeightRaw) || 360;
+
+  const mediaPickerTitle = mediaPicker === "platformHero" ? "Select platform hero image" : "Select news image";
+
+  const handleSelectMedia = (url: string) => {
+    if (mediaPicker === "platformHero") {
+      setPlatformForm((prev) => ({ ...prev, heroImageUrl: url }));
+    }
+    if (mediaPicker === "newsImage") {
+      setNewsForm((prev) => ({ ...prev, imageUrl: url }));
+    }
+    setMediaPicker(null);
+  };
+
+  const handleGeneratePlatformImage = async () => {
+    if (!config?.ai?.adminAssistant?.openai?.hasApiKey) {
+      alert("OpenAI API key not saved yet. Set it under Admin > AI assistant.");
+      return;
+    }
+    const prompt = window.prompt(
+      "Describe the platform hero image to generate:",
+      platformForm.name ? `${platformForm.name} platform, modern, professional, abstract technology` : "",
+    );
+    if (!prompt) return;
+    if (!confirm("Generate image with OpenAI and save to your media library?")) return;
+    try {
+      setGenerating("platformHero");
+      const result = await generateImage({ prompt, filenameHint: platformForm.id || platformForm.name || "platform" });
+      setPlatformForm((prev) => ({ ...prev, heroImageUrl: result.blobUrl }));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Image generation failed");
+    } finally {
+      setGenerating(null);
+    }
+  };
+
+  const handleGenerateNewsImage = async () => {
+    if (!config?.ai?.adminAssistant?.openai?.hasApiKey) {
+      alert("OpenAI API key not saved yet. Set it under Admin > AI assistant.");
+      return;
+    }
+    const prompt = window.prompt(
+      "Describe the news image to generate:",
+      newsForm.title ? `${newsForm.title} news header, modern, professional` : "",
+    );
+    if (!prompt) return;
+    if (!confirm("Generate image with OpenAI and save to your media library?")) return;
+    try {
+      setGenerating("newsImage");
+      const result = await generateImage({ prompt, filenameHint: newsForm.id || newsForm.title || "news" });
+      setNewsForm((prev) => ({ ...prev, imageUrl: result.blobUrl }));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Image generation failed");
+    } finally {
+      setGenerating(null);
+    }
+  };
+
+
   return (
     <div className="space-y-6">
       <SectionCard title="Admin portal">
@@ -438,6 +586,184 @@ function AdminDashboard() {
       </SectionCard>
 
       <AdminAiAssistant />
+
+      <SectionCard title="AI usage & pricing">
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs text-slate-300">
+              {aiUsage?.updatedAt ? `Last updated ${new Date(aiUsage.updatedAt).toLocaleString()}` : "Usage totals update after AI calls."}
+            </div>
+            <button type="button" className="btn btn-secondary" disabled={aiUsageFetching} onClick={() => refetchAiUsage()}>
+              {aiUsageFetching ? "Refreshing..." : "Refresh usage"}
+            </button>
+          </div>
+
+          {aiUsageLoading ? (
+            <div className="text-sm text-slate-200">Loading AI usage...</div>
+          ) : aiUsageError ? (
+            <div className="text-sm text-red-200">Failed to load usage stats.</div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="text-xs text-slate-300">Last 30 days · Chat</div>
+                <div className="mt-2 text-sm text-slate-100">
+                  Tokens: {aiUsage?.last30Days?.models?.totals?.totalTokens?.toLocaleString?.() || "0"}
+                </div>
+                <div className="text-xs text-slate-400">
+                  Cost: {aiUsage?.last30Days?.models?.totals?.costUsd != null ? `$${aiUsage.last30Days.models.totals.costUsd}` : "Pricing missing"}
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="text-xs text-slate-300">Last 30 days · Images</div>
+                <div className="mt-2 text-sm text-slate-100">
+                  Tokens: {aiUsage?.last30Days?.images?.totals?.totalTokens?.toLocaleString?.() || "0"}
+                </div>
+                <div className="text-xs text-slate-400">
+                  Cost: {aiUsage?.last30Days?.images?.totals?.costUsd != null ? `$${aiUsage.last30Days.images.totals.costUsd}` : "Pricing missing"}
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="text-xs text-slate-300">All time · Chat</div>
+                <div className="mt-2 text-sm text-slate-100">
+                  Tokens: {aiUsage?.allTime?.models?.totals?.totalTokens?.toLocaleString?.() || "0"}
+                </div>
+                <div className="text-xs text-slate-400">
+                  Cost: {aiUsage?.allTime?.models?.totals?.costUsd != null ? `$${aiUsage.allTime.models.totals.costUsd}` : "Pricing missing"}
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="text-xs text-slate-300">All time · Images</div>
+                <div className="mt-2 text-sm text-slate-100">
+                  Tokens: {aiUsage?.allTime?.images?.totals?.totalTokens?.toLocaleString?.() || "0"}
+                </div>
+                <div className="text-xs text-slate-400">
+                  Cost: {aiUsage?.allTime?.images?.totals?.costUsd != null ? `$${aiUsage.allTime.images.totals.costUsd}` : "Pricing missing"}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-xs text-slate-300">Pricing overrides (USD per 1M tokens)</div>
+                <div className="text-xs text-slate-400">
+                  Source: {aiUsage?.pricing?.source || "manual"} {aiUsage?.pricing?.updatedAt ? `· ${aiUsage.pricing.updatedAt}` : ""}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" className="btn btn-secondary" disabled={refreshPricing.isPending} onClick={() => refreshPricing.mutate(undefined)}>
+                  {refreshPricing.isPending ? "Refreshing..." : "Refresh from OpenAI"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setPricingRows((prev) => [...prev, { model: "", inputUsd: "", outputUsd: "" }]);
+                    setPricingDirty(true);
+                  }}
+                >
+                  Add model
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={savePricing.isPending}
+                  onClick={() => savePricing.mutate()}
+                >
+                  {savePricing.isPending ? "Saving..." : "Save pricing"}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-3 grid gap-2">
+              {pricingRows.length ? (
+                pricingRows.map((row, idx) => (
+                  <div key={`${row.model}-${idx}`} className="grid gap-2 md:grid-cols-[1.4fr_1fr_1fr_auto]">
+                    <input
+                      className="input-field"
+                      placeholder="Model (e.g., gpt-4o-mini)"
+                      value={row.model}
+                      onChange={(e) => {
+                        const next = [...pricingRows];
+                        next[idx] = { ...next[idx], model: e.target.value };
+                        setPricingRows(next);
+                        setPricingDirty(true);
+                      }}
+                    />
+                    <input
+                      className="input-field"
+                      placeholder="Input USD per 1M"
+                      value={row.inputUsd}
+                      onChange={(e) => {
+                        const next = [...pricingRows];
+                        next[idx] = { ...next[idx], inputUsd: e.target.value };
+                        setPricingRows(next);
+                        setPricingDirty(true);
+                      }}
+                    />
+                    <input
+                      className="input-field"
+                      placeholder="Output USD per 1M"
+                      value={row.outputUsd}
+                      onChange={(e) => {
+                        const next = [...pricingRows];
+                        next[idx] = { ...next[idx], outputUsd: e.target.value };
+                        setPricingRows(next);
+                        setPricingDirty(true);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        const next = pricingRows.filter((_, i) => i !== idx);
+                        setPricingRows(next);
+                        setPricingDirty(true);
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="text-xs text-slate-400">No pricing overrides set. Add rows to enable cost estimates.</div>
+              )}
+            </div>
+
+            <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+              <div className="text-xs text-slate-300">Import pricing from text</div>
+              <div className="text-xs text-slate-400">
+                Paste the OpenAI pricing page text here if automatic refresh is blocked.
+              </div>
+              <textarea
+                className="input-field mt-2 min-h-[120px]"
+                placeholder="Paste pricing text from openai.com/api/pricing"
+                value={pricingImportText}
+                onChange={(e) => setPricingImportText(e.target.value)}
+              />
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={!pricingImportText.trim() || refreshPricing.isPending}
+                  onClick={() => refreshPricing.mutate({ pricingText: pricingImportText })}
+                >
+                  {refreshPricing.isPending ? "Importing..." : "Import from text"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setPricingImportText("")}
+                  disabled={!pricingImportText.trim()}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </SectionCard>
 
       <SectionCard title="Platforms">
         <div className="mb-4 grid gap-3 md:grid-cols-2">
@@ -497,6 +823,21 @@ function AdminDashboard() {
               >
                 {uploading === "platformHero" ? "Uploading..." : "Choose file"}
               </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setMediaPicker("platformHero")}
+              >
+                Browse library
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={generating === "platformHero"}
+                onClick={handleGeneratePlatformImage}
+              >
+                {generating === "platformHero" ? "Generating..." : "Generate with AI"}
+              </button>
               <span className="text-xs text-slate-300">{platformForm.heroImageUrl ? "Image selected" : "No file chosen"}</span>
               {platformForm.heroImageUrl && (
                 <img src={platformForm.heroImageUrl} alt="Hero preview" className="h-12 w-12 rounded object-cover ring-1 ring-white/20" />
@@ -537,6 +878,35 @@ function AdminDashboard() {
             value={platformForm.description}
             onChange={(e) => setPlatformForm({ ...platformForm, description: e.target.value })}
           />
+
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="text-xs text-slate-300 mb-2">3D embed (optional)</div>
+            <textarea
+              className="input-field min-h-[120px] font-mono text-xs"
+              placeholder="Paste full HTML for a 3D embed (three.js, Babylon, or custom WebGL)."
+              value={platformEmbedHtml}
+              onChange={(e) =>
+                setPlatformForm((prev) => ({
+                  ...prev,
+                  custom: { ...(prev.custom || {}), embedHtml: e.target.value },
+                }))
+              }
+            />
+            <input
+              className="input-field mt-2"
+              type="number"
+              min={200}
+              max={2000}
+              placeholder="Embed height (px)"
+              value={platformEmbedHeight}
+              onChange={(e) =>
+                setPlatformForm((prev) => ({
+                  ...prev,
+                  custom: { ...(prev.custom || {}), embedHeight: Number(e.target.value) || undefined },
+                }))
+              }
+            />
+          </div>
 
           <div>
             <div className="text-xs text-slate-300 mb-2">Topics</div>
@@ -672,6 +1042,35 @@ function AdminDashboard() {
             onChange={(e) => setTopicForm({ ...topicForm, description: e.target.value })}
           />
 
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="text-xs text-slate-300 mb-2">3D embed (optional)</div>
+            <textarea
+              className="input-field min-h-[120px] font-mono text-xs"
+              placeholder="Paste full HTML for a 3D embed (three.js, Babylon, or custom WebGL)."
+              value={topicEmbedHtml}
+              onChange={(e) =>
+                setTopicForm((prev) => ({
+                  ...prev,
+                  custom: { ...(prev.custom || {}), embedHtml: e.target.value },
+                }))
+              }
+            />
+            <input
+              className="input-field mt-2"
+              type="number"
+              min={200}
+              max={2000}
+              placeholder="Embed height (px)"
+              value={topicEmbedHeight}
+              onChange={(e) =>
+                setTopicForm((prev) => ({
+                  ...prev,
+                  custom: { ...(prev.custom || {}), embedHeight: Number(e.target.value) || undefined },
+                }))
+              }
+            />
+          </div>
+
           <CustomFieldsEditor
             fields={((config?.content?.schemas?.topics || []) as FieldDef[]).filter((f) => f.id && f.label)}
             value={topicForm.custom}
@@ -782,6 +1181,21 @@ function AdminDashboard() {
               >
                 {uploading === "newsImage" ? "Uploading..." : "Choose file"}
               </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setMediaPicker("newsImage")}
+              >
+                Browse library
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={generating === "newsImage"}
+                onClick={handleGenerateNewsImage}
+              >
+                {generating === "newsImage" ? "Generating..." : "Generate with AI"}
+              </button>
               <span className="text-xs text-slate-300">{newsForm.imageUrl ? "Image selected" : "No file chosen"}</span>
               {newsForm.imageUrl && (
                 <img src={newsForm.imageUrl} alt="Preview" className="h-12 w-12 rounded object-cover ring-1 ring-white/20" />
@@ -829,6 +1243,35 @@ function AdminDashboard() {
             value={newsForm.content}
             onChange={(e) => setNewsForm({ ...newsForm, content: e.target.value })}
           />
+
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="text-xs text-slate-300 mb-2">3D embed (optional)</div>
+            <textarea
+              className="input-field min-h-[120px] font-mono text-xs"
+              placeholder="Paste full HTML for a 3D embed (three.js, Babylon, or custom WebGL)."
+              value={newsEmbedHtml}
+              onChange={(e) =>
+                setNewsForm((prev) => ({
+                  ...prev,
+                  custom: { ...(prev.custom || {}), embedHtml: e.target.value },
+                }))
+              }
+            />
+            <input
+              className="input-field mt-2"
+              type="number"
+              min={200}
+              max={2000}
+              placeholder="Embed height (px)"
+              value={newsEmbedHeight}
+              onChange={(e) =>
+                setNewsForm((prev) => ({
+                  ...prev,
+                  custom: { ...(prev.custom || {}), embedHeight: Number(e.target.value) || undefined },
+                }))
+              }
+            />
+          </div>
 
           <div>
             <div className="text-xs text-slate-300 mb-2">Related platforms</div>
@@ -963,6 +1406,12 @@ function AdminDashboard() {
       <ConfigEditor />
       <HomepageEditor />
       <AdminEmailSection />
+      <MediaPicker
+        open={Boolean(mediaPicker)}
+        title={mediaPickerTitle}
+        onClose={() => setMediaPicker(null)}
+        onSelect={handleSelectMedia}
+      />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { NewsCard } from "../components/Cards";
 import { ErrorState, Loading } from "../components/Loading";
 import SectionCard from "../components/SectionCard";
 import { SmartLinkButtons } from "../components/SmartLinkButtons";
+import { EmbedBlock } from "../components/EmbedBlock";
 
 function PlatformDetail() {
   const { platformSlug } = useParams();
@@ -45,6 +46,11 @@ function PlatformDetail() {
     );
   }
 
+  const embedHtml = typeof platform.custom?.["embedHtml"] === "string" ? String(platform.custom?.["embedHtml"]) : "";
+  const embedHeightRaw = platform.custom?.["embedHeight"];
+  const embedHeight = typeof embedHeightRaw === "number" ? embedHeightRaw : Number(embedHeightRaw) || undefined;
+  const embedConfig = embedHtml ? ({ mode: "html", html: embedHtml, height: embedHeight } as const) : undefined;
+
   return (
     <div className="space-y-6">
       <SectionCard title={platform.name}>
@@ -56,6 +62,7 @@ function PlatformDetail() {
             loading="lazy"
           />
         )}
+        {embedConfig ? <EmbedBlock embed={embedConfig} className="mb-4" /> : null}
         <p className="text-sm text-slate-200">{platform.description || platform.summary || "Details coming soon."}</p>
         <SmartLinkButtons links={platform.links} />
         {platform.topics && platform.topics.length > 0 && (

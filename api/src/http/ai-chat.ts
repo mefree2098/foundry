@@ -5,6 +5,7 @@ import type { SiteConfig } from "../types/content.js";
 import { database } from "../client.js";
 import { containers } from "../cosmos.js";
 import { siteConfigSchema } from "../types/content.js";
+import { recordChatUsage } from "../aiUsage.js";
 
 const INTERNAL_TRAINING = `You are the Foundry admin assistant.
 
@@ -20,12 +21,16 @@ Action rules:
 - Use "config.merge" for site configuration changes (themes, nav, homepage sections, custom field schemas).
 - The platform deep-merges objects and REPLACES arrays. If you change an array (e.g., nav.links, home.sections, theme.themes), include the full desired array.
 - Use *.upsert actions for content changes (platform/topic/news). Use *.delete only when the user explicitly asks to delete.
+- Use "media.generate" when you need to create or replace an image asset.
 
 Platform map:
 - Navigation: config.nav.links[] items are { id, label, href, enabled?, newTab? }. Internal hrefs start with "/".
+- Platform/news links must be a record (object) of label -> url, not an array.
 - Homepage builder: config.home.sections[] controls order/visibility. Section types supported:
-  - trust, ai, platforms, news, topics, newsletter, richText, cta
+  - trust, ai, platforms, news, topics, newsletter, richText, cta, embed3d
   - Common fields: { id, type, enabled?, title?, subtitle?, maxItems?, markdown?, cta? }
+  - 3D embeds: use section.embed with { mode: "html" | "threejs", html?, script?, height? }.
+- Platform/news 3D: set item.custom.embedHtml (full HTML) and item.custom.embedHeight (px).
 - Themes: config.theme.themes[] and config.theme.active.
   - Each theme has { id, name, vars } where vars is CSS variable map (e.g., "--color-bg": "#050a0a").
   - Theme intent: Theme 2 uses black background and emerald 3D panels; keep buttons black unless the user requests otherwise.
@@ -64,7 +69,19 @@ type AdminAiAction =
   | { type: "news.upsert"; value: unknown }
   | { type: "platform.delete"; id: string }
   | { type: "topic.delete"; id: string }
-  | { type: "news.delete"; id: string };
+  | { type: "news.delete"; id: string }
+  | {
+      type: "media.generate";
+      value: {
+        prompt: string;
+        targetType: "platform" | "news" | "config";
+        targetId?: string;
+        field: string;
+        size?: string;
+        quality?: "low" | "medium" | "high" | "auto";
+        background?: "transparent" | "opaque" | "auto";
+      };
+    };
 
 const responseSchema = z.object({
   assistantMessage: z.string(),
@@ -125,6 +142,7 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
     '- { "type": "platform.delete", "id": string }',
     '- { "type": "topic.delete", "id": string }',
     '- { "type": "news.delete", "id": string }',
+    '- { "type": "media.generate", "value": { prompt, targetType, targetId?, field, size?, quality?, background? } }',
     "",
     "Rules:",
     "- Keep actions minimal and safe.",
@@ -138,6 +156,8 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
     "- Homepage sections order is config.home.sections; each item includes {id,type,enabled?,title?,subtitle?,maxItems?,markdown?,cta?}.",
     "- Extra fields are defined in config.content.schemas.* and stored in items under custom.<fieldId>.",
     "- Themes are stored in config.theme.themes[] and the active theme is config.theme.active.",
+    "- For 3D embeds, use section.embed or item.custom.embedHtml + item.custom.embedHeight.",
+    "- For AI image generation, propose a media.generate action (only when needed).",
     "",
     "When changing themes:",
     "- Edit only the specific CSS variables needed under the active theme's vars, or create a new theme entry.",
@@ -180,6 +200,19 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
   const data = (await upstream.json()) as any;
   const content = String(data?.choices?.[0]?.message?.content || "").trim();
   if (!content) return { status: 502, body: "OpenAI returned an empty response." };
+
+  const usage = data?.usage || {};
+  const promptTokens = Number(usage.prompt_tokens || usage.input_tokens || 0);
+  const completionTokens = Number(usage.completion_tokens || usage.output_tokens || 0);
+  const totalTokens = Number(usage.total_tokens || 0) || promptTokens + completionTokens;
+  const resolvedModel = String(data?.model || finalModel || "").trim();
+  if (totalTokens > 0 && resolvedModel) {
+    try {
+      await recordChatUsage(resolvedModel, { promptTokens, completionTokens, totalTokens });
+    } catch (err) {
+      context.log(`Failed to record AI usage: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   let json: unknown;
   try {
