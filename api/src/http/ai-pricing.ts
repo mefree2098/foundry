@@ -64,6 +64,102 @@ function extractNextData(html: string) {
   }
 }
 
+function normalizeModelKey(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9.-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function parsePricingText(text: string) {
+  const models: Record<string, PricingModel> = {};
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  let currentModel: string | null = null;
+  let pendingInput: number | null = null;
+  let pendingOutput: number | null = null;
+  let expecting: "input" | "output" | null = null;
+
+  const commit = () => {
+    if (!currentModel) return;
+    if (pendingInput == null || pendingOutput == null) return;
+    const key = normalizeModelKey(currentModel);
+    if (!key) return;
+    models[key] = { inputUsdPerMillion: pendingInput, outputUsdPerMillion: pendingOutput };
+  };
+
+  const isModelLine = (line: string) => {
+    const lower = line.toLowerCase();
+    if (!/^(gpt|o[0-9]|sora)/.test(lower)) return false;
+    if (lower.includes("price") || lower.includes("input") || lower.includes("output") || lower.includes("cached")) return false;
+    if (lower.includes("tokens") || lower.includes("api") || lower.includes("models")) return false;
+    return true;
+  };
+
+  for (const line of lines) {
+    const singleLine = line.match(
+      /^([a-z0-9][a-z0-9 .-]*)\s+\$([0-9.]+)\s*\/\s*1m\s*input tokens.*?\$([0-9.]+)\s*\/\s*1m\s*output tokens/i,
+    );
+    if (singleLine) {
+      const [, modelName, inputStr, outputStr] = singleLine;
+      const input = parseNumber(inputStr);
+      const output = parseNumber(outputStr);
+      if (input != null && output != null) {
+        currentModel = modelName;
+        pendingInput = input;
+        pendingOutput = output;
+        commit();
+      }
+      expecting = null;
+      continue;
+    }
+
+    if (isModelLine(line)) {
+      commit();
+      currentModel = line;
+      pendingInput = null;
+      pendingOutput = null;
+      expecting = null;
+      continue;
+    }
+
+    const inputMatch = line.match(/Input:\s*\$?([0-9.]+)/i);
+    if (inputMatch) {
+      const value = parseNumber(inputMatch[1]);
+      if (value != null) pendingInput = value;
+      expecting = "input";
+      continue;
+    }
+
+    const outputMatch = line.match(/Output:\s*\$?([0-9.]+)/i);
+    if (outputMatch) {
+      const value = parseNumber(outputMatch[1]);
+      if (value != null) pendingOutput = value;
+      expecting = "output";
+      continue;
+    }
+
+    if (expecting) {
+      const valueMatch = line.match(/\$([0-9.]+)/);
+      if (valueMatch) {
+        const value = parseNumber(valueMatch[1]);
+        if (value != null) {
+          if (expecting === "input") pendingInput = value;
+          if (expecting === "output") pendingOutput = value;
+          expecting = null;
+        }
+      }
+    }
+  }
+
+  commit();
+  return models;
+}
+
 async function fetchOpenAiPricing(): Promise<PricingResult | null> {
   const urls = ["https://openai.com/api/pricing/?utm_source=chatgpt.com", "https://openai.com/api/pricing/", "https://platform.openai.com/docs/pricing"];
   for (const url of urls) {
@@ -159,11 +255,59 @@ async function refreshPricing(req: HttpRequest, context: InvocationContext): Pro
   const auth = ensureAdmin(req);
   if (!auth.ok) return { status: auth.status, body: auth.body };
 
+  let payload: any = undefined;
+  try {
+    payload = await req.json();
+  } catch {
+    payload = undefined;
+  }
+
   let existing: SiteConfig | undefined;
   try {
     existing = (await readConfig()) || undefined;
   } catch {
     existing = undefined;
+  }
+
+  const pricingText = typeof payload?.pricingText === "string" ? payload.pricingText : undefined;
+  if (pricingText) {
+    const models = parsePricingText(pricingText);
+    if (!Object.keys(models).length) {
+      return { status: 400, body: "No pricing models could be parsed from the provided text." };
+    }
+    const saved = await writePricing(
+      { models, source: "manual:text", updatedAt: new Date().toISOString() },
+      existing,
+    );
+    return {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(saved),
+    };
+  }
+
+  if (payload?.models && typeof payload.models === "object") {
+    const models: Record<string, PricingModel> = {};
+    for (const [key, value] of Object.entries(payload.models as Record<string, any>)) {
+      const input = parseNumber(value?.inputUsdPerMillion);
+      const output = parseNumber(value?.outputUsdPerMillion);
+      if (input == null || output == null) continue;
+      const modelKey = normalizeModelKey(key);
+      if (!modelKey) continue;
+      models[modelKey] = { inputUsdPerMillion: input, outputUsdPerMillion: output };
+    }
+    if (!Object.keys(models).length) {
+      return { status: 400, body: "No valid pricing models found in the payload." };
+    }
+    const saved = await writePricing(
+      { models, source: "manual:json", updatedAt: new Date().toISOString() },
+      existing,
+    );
+    return {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(saved),
+    };
   }
 
   const fetched = await fetchOpenAiPricing();

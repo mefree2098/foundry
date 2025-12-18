@@ -127,10 +127,11 @@ export const fetchAiUsage = () =>
     };
   }>("/ai/usage");
 
-export const refreshAiPricing = () =>
+export const refreshAiPricing = (payload?: { pricingText?: string; models?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> }) =>
   sendJson<{ source?: string; updatedAt?: string; models?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> }>(
     "/ai/pricing/refresh",
     "POST",
+    payload,
   );
 
 export const fetchAiPricing = () =>

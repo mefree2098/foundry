@@ -222,6 +222,7 @@ function AdminDashboard() {
   const [mediaPicker, setMediaPicker] = useState<null | "platformHero" | "newsImage">(null);
   const [pricingRows, setPricingRows] = useState<{ model: string; inputUsd: string; outputUsd: string }[]>([]);
   const [pricingDirty, setPricingDirty] = useState(false);
+  const [pricingImportText, setPricingImportText] = useState("");
 
   const { data: aiUsage, isLoading: aiUsageLoading, isError: aiUsageError, refetch: refetchAiUsage } = useQuery({
     queryKey: ["ai-usage"],
@@ -270,11 +271,12 @@ function AdminDashboard() {
   });
 
   const refreshPricing = useMutation({
-    mutationFn: refreshAiPricing,
-    onSuccess: async () => {
+    mutationFn: (payload?: { pricingText?: string }) => refreshAiPricing(payload),
+    onSuccess: async (_data, variables) => {
       await queryClient.invalidateQueries({ queryKey: ["config"] });
       await queryClient.invalidateQueries({ queryKey: ["ai-usage"] });
       setPricingDirty(false);
+      if (variables?.pricingText) setPricingImportText("");
     },
     onError: (err: unknown) => alert(err instanceof Error ? err.message : "Failed to refresh pricing"),
   });
@@ -644,7 +646,7 @@ function AdminDashboard() {
                 </div>
               </div>
               <div className="flex gap-2">
-                <button type="button" className="btn btn-secondary" disabled={refreshPricing.isPending} onClick={() => refreshPricing.mutate()}>
+                <button type="button" className="btn btn-secondary" disabled={refreshPricing.isPending} onClick={() => refreshPricing.mutate(undefined)}>
                   {refreshPricing.isPending ? "Refreshing..." : "Refresh from OpenAI"}
                 </button>
                 <button
@@ -721,6 +723,37 @@ function AdminDashboard() {
               ) : (
                 <div className="text-xs text-slate-400">No pricing overrides set. Add rows to enable cost estimates.</div>
               )}
+            </div>
+
+            <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+              <div className="text-xs text-slate-300">Import pricing from text</div>
+              <div className="text-xs text-slate-400">
+                Paste the OpenAI pricing page text here if automatic refresh is blocked.
+              </div>
+              <textarea
+                className="input-field mt-2 min-h-[120px]"
+                placeholder="Paste pricing text from openai.com/api/pricing"
+                value={pricingImportText}
+                onChange={(e) => setPricingImportText(e.target.value)}
+              />
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={!pricingImportText.trim() || refreshPricing.isPending}
+                  onClick={() => refreshPricing.mutate({ pricingText: pricingImportText })}
+                >
+                  {refreshPricing.isPending ? "Importing..." : "Import from text"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setPricingImportText("")}
+                  disabled={!pricingImportText.trim()}
+                >
+                  Clear
+                </button>
+              </div>
             </div>
           </div>
         </div>
