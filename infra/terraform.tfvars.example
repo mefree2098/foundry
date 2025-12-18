@@ -1,0 +1,17 @@
+prefix            = "foundry"
+location          = "westus2" # must support Static Web Apps (Free): westus2, centralus, eastus2, westeurope, eastasia
+enforce_free_tier = true
+
+# Cosmos DB: free tier + shared database autoscale throughput (max 1000 RU) to stay in free tier.
+cosmos_enable_free_tier = true
+cosmos_use_serverless = false
+cosmos_shared_database_max_throughput = 1000
+
+# Required
+subscription_id   = "<your-subscription-id>"
+
+# Optional (not required when using GitHub Actions + deployment token)
+# static_web_app_repo_url = "https://github.com/<yourorg>/<yourrepo>"
+# static_web_app_branch   = "main"
+# static_web_app_token    = "SWA_DEPLOYMENT_TOKEN_IF_LINKING_REPO"
+

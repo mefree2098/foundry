@@ -1,0 +1,16 @@
+// Entry point that registers all HTTP functions with the Azure Functions app.
+import "./http/platforms-get.js";
+import "./http/platforms-upsert.js";
+import "./http/config-get.js";
+import "./http/config-upsert.js";
+import "./http/topics-get.js";
+import "./http/topics-upsert.js";
+import "./http/media-sas.js";
+import "./http/news-get.js";
+import "./http/news-upsert.js";
+import "./http/subscriptions-upsert.js";
+import "./http/subscriptions-get.js";
+import "./http/subscriptions-unsubscribe.js";
+import "./http/email-send.js";
+import "./http/email-stats.js";
+import "./http/ai-chat.js";

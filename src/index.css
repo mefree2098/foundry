@@ -1,0 +1,137 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* Foundry palette: deep emerald + magenta accent (see docs/colorscheme.md) */
+    --color-primary: #005b50;
+    --color-secondary: #50c878;
+    --color-accent: #ff007f;
+    --color-surface: rgba(255, 255, 255, 0.04);
+    --color-muted: #94a3b8;
+    --color-text: #e2e8f0;
+    --color-bg: #0b1120;
+
+    /* Background accents */
+    --bg-spot-1: rgba(80, 200, 120, 0.14);
+    --bg-spot-2: rgba(0, 91, 80, 0.16);
+    --bg-spot-3: rgba(255, 0, 127, 0.12);
+
+    /* Surfaces (used by .glass-surface / SectionCard) */
+    --panel-grad-from: rgba(0, 0, 0, 0);
+    --panel-grad-to: rgba(0, 0, 0, 0);
+    --panel-bg: rgba(255, 255, 255, 0.03);
+    --panel-border: rgba(255, 255, 255, 0.07);
+    --panel-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.45), 0 0 45px rgba(0, 91, 80, 0.08);
+    --panel-blur: 12px;
+
+    /* Inputs (admin) */
+    --input-bg: rgba(255, 255, 255, 0.05);
+    --input-border: rgba(255, 255, 255, 0.1);
+    --input-text: var(--color-text);
+    --input-placeholder: rgba(148, 163, 184, 0.9);
+    --input-focus-ring: rgba(255, 0, 127, 0.5);
+
+    /* Dropdown menus */
+    --dropdown-bg: #0b1120;
+    --dropdown-text: var(--color-text);
+
+    /* Buttons (admin) */
+    --btn-primary-bg: #50c878;
+    --btn-primary-bg-hover: #6be59a;
+    --btn-primary-text: #06140f;
+    --btn-primary-border: rgba(255, 255, 255, 0.05);
+
+    --btn-secondary-bg: rgba(255, 255, 255, 0.08);
+    --btn-secondary-bg-hover: rgba(255, 255, 255, 0.14);
+    --btn-secondary-text: var(--color-text);
+    --btn-secondary-border: rgba(255, 255, 255, 0.14);
+
+    font-family: "Inter", "Sora", system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(circle at 14% 16%, var(--bg-spot-1), transparent 30%),
+      radial-gradient(circle at 85% 10%, var(--bg-spot-2), transparent 32%),
+      radial-gradient(circle at 70% 55%, var(--bg-spot-3), transparent 34%),
+      var(--color-bg);
+  }
+
+  a {
+    color: inherit;
+  }
+}
+
+.glass-surface {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--panel-shadow);
+  backdrop-filter: blur(var(--panel-blur));
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, filter 150ms ease;
+}
+
+.btn-primary {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  border: 1px solid var(--btn-primary-border);
+}
+.btn-primary:hover {
+  background: var(--btn-primary-bg-hover);
+}
+.btn-primary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: var(--btn-secondary-bg);
+  color: var(--btn-secondary-text);
+  border: 1px solid var(--btn-secondary-border);
+}
+.btn-secondary:hover {
+  background: var(--btn-secondary-bg-hover);
+}
+.btn-secondary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.input-field {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  padding: 0.5rem 0.75rem;
+  color: var(--input-text);
+}
+.input-field::placeholder {
+  color: var(--input-placeholder);
+}
+.input-field:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--input-focus-ring);
+}
+
+select.input-field {
+  color-scheme: dark;
+}
+select.input-field option,
+select.input-field optgroup {
+  background-color: var(--dropdown-bg);
+  color: var(--dropdown-text);
+}
