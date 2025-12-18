@@ -10,6 +10,7 @@ import { themes, type ThemeDefinition } from "../theme/themes";
 
 const defaults: SiteConfig = {
   id: "global",
+  siteName: "Foundry",
   palette: { primary: "#005b50", secondary: "#50c878" },
   heroBadges: [],
   theme: { active: "theme1", themes: [themes.theme1, themes.theme2] },
@@ -401,6 +402,12 @@ function ConfigEditor() {
             </p>
           </div>
 
+          <input
+            className="input-field"
+            placeholder="Site name"
+            value={form.siteName || ""}
+            onChange={(e) => setForm({ ...form, siteName: e.target.value })}
+          />
           <input
             className="input-field"
             placeholder="Home tagline"

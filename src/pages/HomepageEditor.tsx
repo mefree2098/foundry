@@ -82,7 +82,7 @@ const defaults: NonNullable<SiteConfig["home"]> = {
   },
   aiSection: {
     title: "Bring your own AI",
-    subtitle: "NTR platforms are AI-native by design, but we avoid lock-in. Use the AI provider your organization prefers by supplying your own API key.",
+    subtitle: "Foundry sites are AI-friendly by design, but we avoid lock-in. Use the AI provider your organization prefers by supplying your own API key.",
     footnote: "Examples shown; supported options can vary by platform.",
     providers: AI_PROVIDERS,
   },

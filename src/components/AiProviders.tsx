@@ -26,7 +26,7 @@ function AiProviders({ title = "Bring your own AI", subtitle, footnote, provider
     <SectionCard title={title}>
       <p className="text-sm text-slate-200">
         {subtitle ||
-          "NTR platforms are AI-native by design, but we avoid lock-in. Use the AI provider your organization prefers by supplying your own API key."}
+          "Foundry sites are AI-friendly by design, but we avoid lock-in. Use the AI provider your organization prefers by supplying your own API key."}
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {list.map((p) => (

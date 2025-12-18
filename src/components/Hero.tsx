@@ -2,6 +2,7 @@ import { ArrowUpRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
 type HeroProps = {
+  brandName?: string;
   title: string;
   subtitle: string;
   badges?: string[];
@@ -19,13 +20,13 @@ function isMailto(href: string) {
   return /^mailto:/i.test(href);
 }
 
-function Hero({ title, subtitle, badges = [], ctaText, ctaHref, secondaryCtaText, secondaryCtaHref }: HeroProps) {
+function Hero({ brandName = "Foundry", title, subtitle, badges = [], ctaText, ctaHref, secondaryCtaText, secondaryCtaHref }: HeroProps) {
   const primaryHref = ctaHref?.trim();
   const secondaryHref = secondaryCtaHref?.trim();
 
   return (
     <section className="rounded-3xl border border-white/5 bg-white/5 px-8 py-10 shadow-2xl shadow-ntr-emerald/15">
-      <p className="text-sm uppercase tracking-[0.3em] text-ntr-emerald-bright">New Technology Research</p>
+      <p className="text-sm uppercase tracking-[0.3em] text-ntr-emerald-bright">{brandName}</p>
       <h1 className="mt-3 text-4xl font-semibold text-slate-50 sm:text-5xl">{title}</h1>
       <p className="mt-4 max-w-3xl text-lg text-slate-200">{subtitle}</p>
       <div className="mt-6 flex flex-wrap gap-3">

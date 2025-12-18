@@ -197,7 +197,7 @@ export async function sendCampaign(
   const subject =
     input.subject ||
     emailSettings.templateSubject ||
-    (news ? `NTR update: ${news.title}` : "New update from New Technology Research");
+    (news ? `Foundry update: ${news.title}` : "New update from Foundry");
   const templateHtml = input.html || emailSettings.templateHtml || DEFAULT_TEMPLATE;
 
   const html = hydrateTemplate(templateHtml, {
@@ -236,7 +236,7 @@ export async function sendCampaign(
       content: { subject, html },
       recipients: { to: recipientList },
       replyTo: [],
-      headers: { "X-NTR-Send": `batch-${i + 1}` },
+      headers: { "X-Foundry-Send": `batch-${i + 1}` },
     });
     const response = await poller.pollUntilDone();
 

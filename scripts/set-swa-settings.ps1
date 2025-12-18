@@ -5,7 +5,7 @@ Param(
   [string]$CosmosEndpoint,
   [string]$CosmosKey,
   [string]$CosmosConnectionString,
-  [string]$CosmosDatabase = "ntechr-db",
+  [string]$CosmosDatabase,
   [string]$StorageConnectionString,
   [string]$StorageContainerName = "media",
   [string]$PublicSiteUrl

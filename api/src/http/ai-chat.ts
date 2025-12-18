@@ -6,7 +6,7 @@ import { database } from "../client.js";
 import { containers } from "../cosmos.js";
 import { siteConfigSchema } from "../types/content.js";
 
-const INTERNAL_TRAINING = `You are the New Technology Research (NTR) admin assistant.
+const INTERNAL_TRAINING = `You are the Foundry admin assistant.
 
 Primary goal: help the admin safely edit the site by proposing concrete actions the platform can apply.
 

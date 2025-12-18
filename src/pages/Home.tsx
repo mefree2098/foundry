@@ -55,6 +55,8 @@ function Home() {
     placeholderData: cachedConfig,
   });
 
+  const siteName = config?.siteName || "Foundry";
+
   const heroTitle = config?.heroTitle || "AI-native business platforms";
   const heroSubtitle =
     config?.heroSubtitle ||
@@ -63,8 +65,8 @@ function Home() {
     config?.heroBadges && config.heroBadges.length > 0
       ? config.heroBadges
       : ["Bring your own AI key", "No vendor lock-in", "Enterprise-ready delivery"];
-  const heroCtaText = config?.heroCtaText || "Request a demo";
-  const heroCtaUrl = config?.heroCtaUrl || "mailto:contact@ntechr.com?subject=NTR%20Demo%20Request";
+  const heroCtaText = config?.heroCtaText || "Get in touch";
+  const heroCtaUrl = config?.heroCtaUrl || "mailto:hello@example.com?subject=Foundry%20Site";
 
   const normalizedCtaUrl = (heroCtaUrl || "").trim().replace(/\/$/, "");
   const isPlatformsCta = normalizedCtaUrl === "/platforms" || normalizedCtaUrl.endsWith("/platforms");
@@ -103,6 +105,7 @@ function Home() {
     <div className="space-y-10">
       {config ? (
         <Hero
+          brandName={siteName}
           title={heroTitle}
           subtitle={heroSubtitle}
           badges={heroBadges}

@@ -22,8 +22,8 @@ function isInternalHref(href: string) {
 function Layout() {
   const { data: config } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
   const brandLogo = config?.logoUrl || "/img/ntr-logo-64.png";
-  const brandName = "New Technology Research";
-  const footerTagline = config?.footerTagline || "AI-native business platforms, powered by your AI";
+  const brandName = config?.siteName || "Foundry";
+  const footerTagline = config?.footerTagline || "AI-native sites and apps, powered by your AI";
   const [menuOpen, setMenuOpen] = useState(false);
 
   const navLinks =
@@ -144,7 +144,7 @@ function Layout() {
 
       <footer className="relative z-10 border-t border-white/5 bg-slate-950/70 px-6 py-6 text-sm text-slate-300">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <span>© {new Date().getFullYear()} New Technology Research</span>
+          <span>© {new Date().getFullYear()} {brandName}</span>
           <span className="text-slate-400">{footerTagline}</span>
         </div>
       </footer>

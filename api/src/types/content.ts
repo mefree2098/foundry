@@ -130,6 +130,7 @@ const homeSectionSchema = z
 
 export const siteConfigSchema = z.object({
   id: z.string().default("global"),
+  siteName: z.string().optional(),
   palette: z
     .object({
       primary: z.string(),

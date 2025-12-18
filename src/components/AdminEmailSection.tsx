@@ -22,8 +22,8 @@ const DEFAULT_TEMPLATE = `<h2 style="margin:0 0 10px;">New update: {{newsTitle}}
 </p>`;
 
 const baseSettings: EmailSettings = {
-  fromName: "New Technology Research",
-  templateSubject: "NTR update",
+  fromName: "Foundry",
+  templateSubject: "Foundry update",
   templateHtml: DEFAULT_TEMPLATE,
   batchSize: 490,
   autoNotifyOnNews: false,

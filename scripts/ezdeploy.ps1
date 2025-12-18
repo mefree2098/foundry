@@ -5,7 +5,7 @@ Param(
   [switch]$SkipAppSettings
 )
 
-Write-Host "=== New Technology Research ezdeploy ===" -ForegroundColor Cyan
+Write-Host "=== Foundry ezdeploy ===" -ForegroundColor Cyan
 Write-Host "Terraform dir: $TerraformDir"
 
 if (-not (Get-Command terraform -ErrorAction SilentlyContinue)) {
@@ -49,7 +49,7 @@ function Get-TfVarValue($key) {
 
 $prefix = $env:TF_VAR_prefix
 if (-not $prefix) { $prefix = Get-TfVarValue "prefix" }
-if (-not $prefix) { $prefix = "ntechr" }
+if (-not $prefix) { $prefix = "foundry" }
 
 $subscriptionId = $env:TF_VAR_subscription_id
 if (-not $subscriptionId) { $subscriptionId = Get-TfVarValue "subscription_id" }
@@ -175,4 +175,4 @@ if (-not $SkipAppSettings) {
 Write-Host "`nDeployment complete." -ForegroundColor Green
 Write-Host "Next steps:"
 Write-Host "1) Commit & push to trigger GitHub Actions workflow for SWA deploy."
-Write-Host "2) Point ntechr.com DNS to the Static Web App custom domain." -ForegroundColor Yellow
+Write-Host "2) Add a custom domain (optional) and set up admin auth." -ForegroundColor Yellow

@@ -5,6 +5,7 @@ import { siteConfigSchema } from "../types/content.js";
 
 const defaultConfig = {
   id: "global",
+  siteName: "Foundry",
   palette: {
     primary: "#005b50",
   },

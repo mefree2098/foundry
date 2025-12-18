@@ -2,7 +2,7 @@
 
 @layer base {
   :root {
-    /* NTR palette: deep emerald + magenta accent (see docs/colorscheme.md) */
+    /* Foundry palette: deep emerald + magenta accent (see docs/colorscheme.md) */
     --color-primary: #005b50;
     --color-secondary: #50c878;
     --color-accent: #ff007f;

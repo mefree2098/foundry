@@ -1,5 +1,5 @@
 variable "prefix" {
-  description = "Project/resource prefix (e.g., ntechr)"
+  description = "Project/resource prefix (e.g., foundry)"
   type        = string
 }
 
