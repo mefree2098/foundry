@@ -1,24 +1,26 @@
 import type { SiteConfig } from "../lib/types";
-import type { ThemeId } from "./themes";
 import { themes } from "./themes";
 
-const defaultThemeId: ThemeId = "theme1";
-
-function isThemeId(value: unknown): value is ThemeId {
-  return value === "theme1" || value === "theme2";
-}
+const defaultThemeId = "theme1";
 
 export function applyThemeFromConfig(config: SiteConfig | undefined) {
   const root = document.documentElement;
-  const active = isThemeId(config?.theme?.active) ? (config?.theme?.active as ThemeId) : defaultThemeId;
-  const base = themes[active].vars;
-  const overrides = (config?.theme?.overrides && (config.theme.overrides[active] as Record<string, string> | undefined)) || {};
+  const active = (config?.theme?.active || defaultThemeId).trim() || defaultThemeId;
+
+  const builtIn = themes as Record<string, { vars: Record<string, string> }>;
+  const fromConfig = (config?.theme?.themes || []).find((t) => t.id === active);
+  const defaults = (builtIn[active] && builtIn[active].vars) || themes.theme1.vars;
+  const baseVars = (fromConfig && fromConfig.vars) || {};
+  const legacyOverrides = (config?.theme?.overrides && (config.theme.overrides[active] as Record<string, string> | undefined)) || {};
 
   root.dataset.theme = active;
-  for (const [key, value] of Object.entries(base)) {
+  for (const [key, value] of Object.entries(defaults)) {
     root.style.setProperty(key, value);
   }
-  for (const [key, value] of Object.entries(overrides)) {
+  for (const [key, value] of Object.entries(baseVars)) {
+    root.style.setProperty(key, value);
+  }
+  for (const [key, value] of Object.entries(legacyOverrides)) {
     root.style.setProperty(key, value);
   }
 
@@ -28,4 +30,3 @@ export function applyThemeFromConfig(config: SiteConfig | undefined) {
   if (config?.palette?.background) root.style.setProperty("--color-bg", config.palette.background);
   if (config?.palette?.text) root.style.setProperty("--color-text", config.palette.text);
 }
-

@@ -6,13 +6,13 @@ import { ErrorState, Loading } from "../components/Loading";
 import SectionCard from "../components/SectionCard";
 import type { SiteConfig } from "../lib/types";
 import { applyThemeFromConfig } from "../theme/applyTheme";
-import { themes, type ThemeId } from "../theme/themes";
+import { themes, type ThemeDefinition } from "../theme/themes";
 
 const defaults: SiteConfig = {
   id: "global",
   palette: { primary: "#005b50", secondary: "#50c878" },
   heroBadges: [],
-  theme: { active: "theme1", overrides: {} },
+  theme: { active: "theme1", themes: [themes.theme1, themes.theme2] },
 };
 
 type ThemeVar = { key: string; label: string; kind: "color" | "text" };
@@ -40,8 +40,28 @@ function isHexColor(value: string) {
   return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value.trim());
 }
 
-function coerceThemeId(value: unknown): ThemeId {
-  return value === "theme2" ? "theme2" : "theme1";
+function slugify(input: string) {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function ensureUniqueId(existingIds: Set<string>, base: string) {
+  let next = base;
+  let i = 2;
+  while (existingIds.has(next)) {
+    next = `${base}-${i}`;
+    i += 1;
+  }
+  return next;
+}
+
+function getThemeList(config: SiteConfig): ThemeDefinition[] {
+  const list = (config.theme?.themes || []).filter((t) => t && t.id && t.name && t.vars);
+  if (list.length) return list as ThemeDefinition[];
+  return [themes.theme1, themes.theme2];
 }
 
 function ConfigEditor() {
@@ -51,9 +71,34 @@ function ConfigEditor() {
   const [form, setForm] = useState<SiteConfig>(defaults);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const mutation = useMutation({ mutationFn: saveConfig });
+  const [newThemeName, setNewThemeName] = useState("");
+  const [newThemeBase, setNewThemeBase] = useState<"theme1" | "theme2" | "current">("theme2");
 
   useEffect(() => {
-    if (config) setForm({ ...defaults, ...config });
+    if (!config) return;
+
+    const merged = { ...defaults, ...config } as SiteConfig;
+    const active = (merged.theme?.active || "theme1").trim() || "theme1";
+    const incomingThemes = (merged.theme?.themes || []) as ThemeDefinition[];
+
+    let nextThemes: ThemeDefinition[];
+    if (incomingThemes.length) {
+      nextThemes = incomingThemes;
+    } else {
+      const legacyOverrides = (merged.theme?.overrides || {}) as Record<string, Record<string, string> | undefined>;
+      const t1 = { ...themes.theme1, vars: { ...themes.theme1.vars, ...(legacyOverrides.theme1 || {}) } };
+      const t2 = { ...themes.theme2, vars: { ...themes.theme2.vars, ...(legacyOverrides.theme2 || {}) } };
+      nextThemes = [t1, t2];
+    }
+
+    setForm({
+      ...merged,
+      theme: {
+        ...(merged.theme || {}),
+        active,
+        themes: nextThemes,
+      },
+    });
   }, [config]);
 
   useEffect(() => {
@@ -65,47 +110,93 @@ function ConfigEditor() {
     mutation.mutate(form);
   };
 
-  const activeTheme = coerceThemeId(form.theme?.active);
-  const activeOverrides = (form.theme?.overrides && (form.theme.overrides[activeTheme] as Record<string, string> | undefined)) || {};
-  const baseVars = themes[activeTheme].vars;
+  const themeList = getThemeList(form);
+  const activeThemeId = (form.theme?.active || themeList[0]?.id || "theme1").trim() || "theme1";
+  const selected = themeList.find((t) => t.id === activeThemeId) || themeList[0] || themes.theme1;
+  const builtInVars = (themes as Record<string, ThemeDefinition>)[activeThemeId]?.vars || themes.theme1.vars;
+  const baseVars = { ...builtInVars, ...(selected.vars || {}) };
 
-  const setThemeActive = (next: ThemeId) => {
+  const setThemeActive = (next: string) => {
     setForm((prev) => ({
       ...prev,
       theme: {
+        ...(prev.theme || {}),
         active: next,
-        overrides: prev.theme?.overrides || {},
+        themes: getThemeList(prev),
       },
     }));
   };
 
   const setThemeVar = (key: string, value: string) => {
     setForm((prev) => {
-      const prevTheme = prev.theme || { active: activeTheme, overrides: {} };
-      const overrides = prevTheme.overrides || {};
-      const current = (overrides[activeTheme] as Record<string, string> | undefined) || {};
-      const nextCurrent = { ...current };
-      if (value.trim()) nextCurrent[key] = value;
-      else delete nextCurrent[key];
+      const list = getThemeList(prev).map((t) => ({ ...t, vars: { ...(t.vars || {}) } }));
+      const idx = list.findIndex((t) => t.id === activeThemeId);
+      if (idx === -1) return prev;
+      const nextVars = { ...(list[idx].vars || {}) };
+      if (value.trim()) nextVars[key] = value;
+      else delete nextVars[key];
+      list[idx] = { ...list[idx], vars: nextVars };
       return {
         ...prev,
         theme: {
-          active: prevTheme.active,
-          overrides: {
-            ...overrides,
-            [activeTheme]: nextCurrent,
-          },
+          ...(prev.theme || {}),
+          active: activeThemeId,
+          themes: list,
         },
       };
     });
   };
 
-  const resetThemeOverrides = () => {
+  const resetThemeToTemplate = (template: "theme1" | "theme2") => {
     setForm((prev) => {
-      const prevTheme = prev.theme || { active: activeTheme, overrides: {} };
-      const overrides = { ...(prevTheme.overrides || {}) };
-      delete overrides[activeTheme];
-      return { ...prev, theme: { active: prevTheme.active, overrides } };
+      const list = getThemeList(prev).map((t) => ({ ...t }));
+      const idx = list.findIndex((t) => t.id === activeThemeId);
+      if (idx === -1) return prev;
+      list[idx] = { ...list[idx], vars: { ...(themes[template].vars as Record<string, string>) } };
+      return { ...prev, theme: { ...(prev.theme || {}), active: activeThemeId, themes: list } };
+    });
+  };
+
+  const createTheme = () => {
+    const name = newThemeName.trim();
+    if (!name) return;
+    setForm((prev) => {
+      const list = getThemeList(prev).map((t) => ({ ...t, vars: { ...(t.vars || {}) } }));
+      const existingIds = new Set(list.map((t) => t.id));
+      const slug = slugify(name) || "theme";
+      const id = ensureUniqueId(existingIds, `theme-${slug}`);
+
+      const base =
+        newThemeBase === "current"
+          ? { ...baseVars }
+          : { ...(themes[newThemeBase].vars as Record<string, string>) };
+
+      const nextTheme: ThemeDefinition = { id, name, vars: base };
+      return { ...prev, theme: { ...(prev.theme || {}), active: id, themes: [...list, nextTheme] } };
+    });
+    setNewThemeName("");
+    setNewThemeBase("theme2");
+  };
+
+  const renameTheme = (themeId: string) => {
+    const current = themeList.find((t) => t.id === themeId);
+    const nextName = prompt("Theme name:", current?.name || "");
+    if (!nextName) return;
+    setForm((prev) => {
+      const list = getThemeList(prev).map((t) => (t.id === themeId ? { ...t, name: nextName.trim() } : t));
+      return { ...prev, theme: { ...(prev.theme || {}), themes: list } };
+    });
+  };
+
+  const deleteTheme = (themeId: string) => {
+    if (themeList.length <= 1) return;
+    if (!confirm(`Delete theme \"${themeId}\"?`)) return;
+    setForm((prev) => {
+      const list = getThemeList(prev).filter((t) => t.id !== themeId);
+      if (list.length === 0) return prev;
+      const active = (prev.theme?.active || list[0].id).trim() || list[0].id;
+      const nextActive = active === themeId ? list[0].id : active;
+      return { ...prev, theme: { ...(prev.theme || {}), active: nextActive, themes: list } };
     });
   };
 
@@ -121,26 +212,60 @@ function ConfigEditor() {
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-slate-100">Theme</div>
-                <div className="text-xs text-slate-300">Theme 1 preserves the current look. Theme 2 uses emerald gradient panels and black buttons.</div>
+                <div className="text-xs text-slate-300">Create, rename, delete themes. The active theme applies immediately while you edit.</div>
               </div>
               <div className="flex items-center gap-2">
                 <select
                   className="input-field max-w-[260px]"
-                  value={activeTheme}
-                  onChange={(e) => setThemeActive((e.target.value as ThemeId) || "theme1")}
+                  value={activeThemeId}
+                  onChange={(e) => setThemeActive(e.target.value)}
                 >
-                  <option value="theme1">Theme 1 (Glass)</option>
-                  <option value="theme2">Theme 2 (Emerald Panels + Black Buttons)</option>
+                  {themeList.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
                 </select>
-                <button type="button" className="btn btn-secondary" onClick={resetThemeOverrides}>
-                  Reset overrides
+                <button type="button" className="btn btn-secondary" onClick={() => resetThemeToTemplate("theme1")}>
+                  Reset to Theme 1
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => resetThemeToTemplate("theme2")}>
+                  Reset to Theme 2
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => renameTheme(activeThemeId)}>
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={themeList.length <= 1}
+                  onClick={() => deleteTheme(activeThemeId)}
+                >
+                  Delete
                 </button>
               </div>
             </div>
 
+            <div className="mb-4 grid gap-2 md:grid-cols-[1fr_240px_auto]">
+              <input
+                className="input-field"
+                placeholder="New theme name"
+                value={newThemeName}
+                onChange={(e) => setNewThemeName(e.target.value)}
+              />
+              <select className="input-field" value={newThemeBase} onChange={(e) => setNewThemeBase(e.target.value as any)}>
+                <option value="theme1">Use Theme 1 template</option>
+                <option value="theme2">Use Theme 2 template</option>
+                <option value="current">Copy current theme</option>
+              </select>
+              <button type="button" className="btn btn-primary" onClick={createTheme} disabled={!newThemeName.trim()}>
+                Create
+              </button>
+            </div>
+
             <div className="grid gap-3 md:grid-cols-3">
               {themeVars.map((v) => {
-                const val = activeOverrides[v.key] || "";
+                const val = (selected.vars && selected.vars[v.key]) || "";
                 const effective = val || baseVars[v.key] || "";
                 const showColor = v.kind === "color" && isHexColor(effective);
                 const colorValue = isHexColor(val) ? val : isHexColor(effective) ? effective : "#000000";
@@ -159,7 +284,7 @@ function ConfigEditor() {
                       <input
                         className="input-field"
                         placeholder={v.key}
-                        value={val}
+                        value={val || ""}
                         onChange={(e) => setThemeVar(v.key, e.target.value)}
                       />
                     </div>

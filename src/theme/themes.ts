@@ -1,12 +1,10 @@
-export type ThemeId = "theme1" | "theme2";
-
 export type ThemeDefinition = {
-  id: ThemeId;
+  id: string;
   name: string;
   vars: Record<string, string>;
 };
 
-export const themes: Record<ThemeId, ThemeDefinition> = {
+export const themes: Record<"theme1" | "theme2", ThemeDefinition> = {
   theme1: {
     id: "theme1",
     name: "Theme 1 (Glass)",

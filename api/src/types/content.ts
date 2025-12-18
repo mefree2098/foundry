@@ -95,7 +95,6 @@ export const emailSettingsSchema = z.object({
 });
 export type EmailSettings = z.infer<typeof emailSettingsSchema>;
 
-const themeIdSchema = z.enum(["theme1", "theme2"]);
 const cssVarMapSchema = z.record(z.string(), z.string());
 
 export const siteConfigSchema = z.object({
@@ -110,13 +109,17 @@ export const siteConfigSchema = z.object({
     .optional(),
   theme: z
     .object({
-      active: themeIdSchema.optional(),
-      overrides: z
-        .object({
-          theme1: cssVarMapSchema.optional(),
-          theme2: cssVarMapSchema.optional(),
-        })
+      active: z.string().optional(),
+      themes: z
+        .array(
+          z.object({
+            id: z.string().min(1),
+            name: z.string().min(1),
+            vars: cssVarMapSchema,
+          }),
+        )
         .optional(),
+      overrides: z.record(z.string(), cssVarMapSchema).optional(),
     })
     .optional(),
   fonts: z
