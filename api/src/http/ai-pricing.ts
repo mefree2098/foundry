@@ -134,12 +134,34 @@ function parsePricingText(text: string) {
       expecting = "input";
       continue;
     }
+    if (/^Input:\s*$/i.test(line)) {
+      expecting = "input";
+      continue;
+    }
 
     const outputMatch = line.match(/Output:\s*\$?([0-9.]+)/i);
     if (outputMatch) {
       const value = parseNumber(outputMatch[1]);
       if (value != null) pendingOutput = value;
       expecting = "output";
+      continue;
+    }
+    if (/^Output:\s*$/i.test(line)) {
+      expecting = "output";
+      continue;
+    }
+
+    const inlineInput = line.match(/\$([0-9.]+).*input tokens/i);
+    if (inlineInput) {
+      const value = parseNumber(inlineInput[1]);
+      if (value != null) pendingInput = value;
+      continue;
+    }
+
+    const inlineOutput = line.match(/\$([0-9.]+).*output tokens/i);
+    if (inlineOutput) {
+      const value = parseNumber(inlineOutput[1]);
+      if (value != null) pendingOutput = value;
       continue;
     }
 
