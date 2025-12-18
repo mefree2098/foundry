@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, Link } from "react-router-dom";
 import { fetchConfig } from "../lib/api";
 import { Menu, X } from "lucide-react";
+import { applyThemeFromConfig } from "../theme/applyTheme";
 
 const navLinks = [
   { to: "/", label: "Home" },
@@ -20,6 +21,10 @@ function Layout() {
   const brandName = "New Technology Research";
   const footerTagline = config?.footerTagline || "AI-native business platforms, powered by your AI";
   const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    applyThemeFromConfig(config);
+  }, [config]);
 
   useEffect(() => {
     if (!brandLogo) return;

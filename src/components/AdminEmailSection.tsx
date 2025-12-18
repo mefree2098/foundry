@@ -138,19 +138,19 @@ function AdminEmailSection() {
         <div className="text-sm font-semibold text-slate-100">Template & settings</div>
         <div className="grid gap-3 md:grid-cols-2">
           <input
-            className="rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+            className="input-field"
             placeholder="From name"
             value={settings.fromName || ""}
             onChange={(e) => setSettings({ ...settings, fromName: e.target.value })}
           />
           <input
-            className="rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+            className="input-field"
             placeholder="From email (must be verified in ACS)"
             value={settings.fromEmail || ""}
             onChange={(e) => setSettings({ ...settings, fromEmail: e.target.value })}
           />
           <input
-            className="rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+            className="input-field"
             placeholder="Manage preferences URL"
             value={settings.manageUrl || ""}
             onChange={(e) => setSettings({ ...settings, manageUrl: e.target.value })}
@@ -159,7 +159,7 @@ function AdminEmailSection() {
             type="number"
             min={1}
             max={490}
-            className="rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+            className="input-field"
             placeholder="Batch size (<=490)"
             value={settings.batchSize ?? 490}
             onChange={(e) => setSettings({ ...settings, batchSize: Number(e.target.value) })}
@@ -173,20 +173,20 @@ function AdminEmailSection() {
             Auto-notify on new news posts (server-side)
           </label>
           <input
-            className="md:col-span-2 rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+            className="input-field md:col-span-2"
             placeholder="Template subject"
             value={customSubject}
             onChange={(e) => setCustomSubject(e.target.value)}
           />
           <textarea
-            className="md:col-span-2 min-h-[160px] rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+            className="input-field md:col-span-2 min-h-[160px]"
             placeholder="Template HTML"
             value={customHtml}
             onChange={(e) => setCustomHtml(e.target.value)}
           />
           <input
             type="password"
-            className="md:col-span-2 rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+            className="input-field md:col-span-2"
             placeholder={hasApiKey ? "******** (stored)" : "MailerLite API key (optional)"}
             value={apiKeyInput}
             onChange={(e) => setApiKeyInput(e.target.value)}
@@ -199,7 +199,7 @@ function AdminEmailSection() {
         <button
           type="submit"
           disabled={saveMutation.isPending || !config}
-          className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-70"
+          className="btn btn-primary"
         >
           {saveMutation.isPending ? "Saving..." : "Save settings"}
         </button>
@@ -211,7 +211,7 @@ function AdminEmailSection() {
         <div className="text-sm font-semibold text-slate-100">Send notification</div>
         <div className="grid gap-3 md:grid-cols-2">
           <select
-            className="rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+            className="input-field"
             value={newsId}
             onChange={(e) => setNewsId(e.target.value)}
           >
@@ -259,7 +259,7 @@ function AdminEmailSection() {
         <button
           type="submit"
           disabled={sendMutation.isPending}
-          className="rounded-md bg-indigo-500 px-4 py-2 text-sm font-semibold text-slate-50 transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-70"
+          className="btn btn-primary"
         >
           {sendMutation.isPending ? "Queuing..." : "Send notification"}
         </button>

@@ -8,6 +8,9 @@ const defaultConfig = {
   palette: {
     primary: "#005b50",
   },
+  theme: {
+    active: "theme1",
+  },
 };
 
 async function getConfig(_req: HttpRequest): Promise<HttpResponseInit> {

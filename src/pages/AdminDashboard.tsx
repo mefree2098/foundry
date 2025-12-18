@@ -183,13 +183,13 @@ function AdminDashboard() {
     <div className="mt-3 flex flex-wrap gap-3">
       <a
         href="/.auth/login/github"
-        className="rounded-md bg-emerald-500 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
+        className="btn btn-secondary"
       >
         Sign in with GitHub
       </a>
       <a
         href="/.auth/login/aad"
-        className="rounded-md bg-emerald-500 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
+        className="btn btn-secondary"
       >
         Sign in with Microsoft Entra
       </a>
@@ -339,7 +339,7 @@ function AdminDashboard() {
       <SectionCard title="Platforms">
         <div className="mb-4 grid gap-3 md:grid-cols-2">
           <select
-            className="rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+            className="input-field"
             value=""
             onChange={(e) => loadPlatform(e.target.value)}
           >
@@ -358,25 +358,25 @@ function AdminDashboard() {
         <form className="space-y-4" onSubmit={handlePlatformSubmit}>
           <div className="grid gap-3 md:grid-cols-2">
             <input
-              className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+              className="input-field"
               placeholder="Slug (id)"
               value={platformForm.id}
               onChange={(e) => setPlatformForm({ ...platformForm, id: e.target.value })}
             />
             <input
-              className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+              className="input-field"
               placeholder="Name"
               value={platformForm.name}
               onChange={(e) => setPlatformForm({ ...platformForm, name: e.target.value })}
             />
             <input
-              className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+              className="input-field"
               placeholder="Tagline"
               value={platformForm.tagline}
               onChange={(e) => setPlatformForm({ ...platformForm, tagline: e.target.value })}
             />
             <input
-              className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+              className="input-field"
               placeholder="Hero image URL"
               value={platformForm.heroImageUrl}
               onChange={(e) => setPlatformForm({ ...platformForm, heroImageUrl: e.target.value })}
@@ -389,7 +389,7 @@ function AdminDashboard() {
               <button
                 type="button"
                 disabled={uploading === "platformHero"}
-                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn btn-primary"
                 onClick={() => document.getElementById("platform-hero-upload")?.click()}
               >
                 {uploading === "platformHero" ? "Uploading..." : "Choose file"}
@@ -423,13 +423,13 @@ function AdminDashboard() {
           </div>
 
           <textarea
-            className="min-h-[70px] w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+            className="input-field min-h-[70px]"
             placeholder="Summary (short)"
             value={platformForm.summary}
             onChange={(e) => setPlatformForm({ ...platformForm, summary: e.target.value })}
           />
           <textarea
-            className="min-h-[120px] w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+            className="input-field min-h-[120px]"
             placeholder="Description"
             value={platformForm.description}
             onChange={(e) => setPlatformForm({ ...platformForm, description: e.target.value })}
@@ -463,20 +463,20 @@ function AdminDashboard() {
               {platformForm.linksList.map((item, idx) => (
                 <div key={idx} className="grid gap-2 md:grid-cols-[1fr_2fr_auto]">
                   <input
-                    className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+                    className="input-field"
                     placeholder="Label (e.g., Docs)"
                     value={item.label}
                     onChange={(e) => updateLinkRow("platform", idx, "label", e.target.value)}
                   />
                   <input
-                    className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+                    className="input-field"
                     placeholder="URL (https://...)"
                     value={item.url}
                     onChange={(e) => updateLinkRow("platform", idx, "url", e.target.value)}
                   />
                   <button
                     type="button"
-                    className="rounded-md border border-white/15 px-3 py-2 text-sm text-slate-200 transition hover:border-white/30"
+                    className="btn btn-secondary"
                     onClick={() => removeLinkRow("platform", idx)}
                   >
                     Remove
@@ -486,7 +486,7 @@ function AdminDashboard() {
             </div>
             <button
               type="button"
-              className="mt-2 rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:bg-white/20"
+              className="btn btn-secondary mt-2"
               onClick={() => addLinkRow("platform")}
             >
               Add link
@@ -497,13 +497,13 @@ function AdminDashboard() {
             <button
               type="submit"
               disabled={platformSave.isPending}
-              className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-70"
+              className="btn btn-primary"
             >
               {platformSave.isPending ? "Saving..." : "Save platform"}
             </button>
             <button
               type="button"
-              className="rounded-md border border-white/15 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/30"
+              className="btn btn-secondary"
               onClick={() => setPlatformForm(defaultPlatform)}
             >
               Reset
@@ -527,7 +527,7 @@ function AdminDashboard() {
       <SectionCard title="Topics">
         <div className="mb-4 grid gap-3 md:grid-cols-2">
           <select
-            className="rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+            className="input-field"
             value=""
             onChange={(e) => loadTopic(e.target.value)}
           >
@@ -544,20 +544,20 @@ function AdminDashboard() {
         <form className="space-y-3" onSubmit={handleTopicSubmit}>
           <div className="grid gap-3 md:grid-cols-2">
             <input
-              className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+              className="input-field"
               placeholder="Slug (id)"
               value={topicForm.id}
               onChange={(e) => setTopicForm({ ...topicForm, id: e.target.value })}
             />
             <input
-              className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+              className="input-field"
               placeholder="Name"
               value={topicForm.name}
               onChange={(e) => setTopicForm({ ...topicForm, name: e.target.value })}
             />
           </div>
           <textarea
-            className="min-h-[90px] w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+            className="input-field min-h-[90px]"
             placeholder="Description"
             value={topicForm.description}
             onChange={(e) => setTopicForm({ ...topicForm, description: e.target.value })}
@@ -566,13 +566,13 @@ function AdminDashboard() {
             <button
               type="submit"
               disabled={topicSave.isPending}
-              className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-70"
+              className="btn btn-primary"
             >
               {topicSave.isPending ? "Saving..." : "Save topic"}
             </button>
             <button
               type="button"
-              className="rounded-md border border-white/15 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/30"
+              className="btn btn-secondary"
               onClick={() => setTopicForm(defaultTopic)}
             >
               Reset
@@ -596,7 +596,7 @@ function AdminDashboard() {
       <SectionCard title="News">
         <div className="mb-4 grid gap-3 md:grid-cols-2">
           <select
-            className="rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+            className="input-field"
             value=""
             onChange={(e) => loadNews(e.target.value)}
           >
@@ -613,19 +613,19 @@ function AdminDashboard() {
         <form className="space-y-4" onSubmit={handleNewsSubmit}>
           <div className="grid gap-3 md:grid-cols-2">
             <input
-              className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+              className="input-field"
               placeholder="Slug (id)"
               value={newsForm.id}
               onChange={(e) => setNewsForm({ ...newsForm, id: e.target.value })}
             />
             <input
-              className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+              className="input-field"
               placeholder="Title"
               value={newsForm.title}
               onChange={(e) => setNewsForm({ ...newsForm, title: e.target.value })}
             />
             <select
-              className="rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+              className="input-field"
               value={newsForm.type}
               onChange={(e) => setNewsForm({ ...newsForm, type: e.target.value as NewsForm["type"] })}
             >
@@ -634,7 +634,7 @@ function AdminDashboard() {
               <option value="Insight">Insight</option>
             </select>
             <select
-              className="rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-slate-100"
+              className="input-field"
               value={newsForm.status}
               onChange={(e) => setNewsForm({ ...newsForm, status: e.target.value as NewsForm["status"] })}
             >
@@ -642,13 +642,13 @@ function AdminDashboard() {
               <option value="Draft">Draft</option>
             </select>
             <input
-              className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+              className="input-field"
               placeholder="Publish date (YYYY-MM-DD or text)"
               value={newsForm.publishDate}
               onChange={(e) => setNewsForm({ ...newsForm, publishDate: e.target.value })}
             />
             <input
-              className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+              className="input-field"
               placeholder="Image URL"
               value={newsForm.imageUrl}
               onChange={(e) => setNewsForm({ ...newsForm, imageUrl: e.target.value })}
@@ -661,7 +661,7 @@ function AdminDashboard() {
               <button
                 type="button"
                 disabled={uploading === "newsImage"}
-                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn btn-primary"
                 onClick={() => document.getElementById("news-image-upload")?.click()}
               >
                 {uploading === "newsImage" ? "Uploading..." : "Choose file"}
@@ -695,20 +695,20 @@ function AdminDashboard() {
           </div>
 
           <input
-            className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+            className="input-field"
             placeholder="Image alt text"
             value={newsForm.imageAlt}
             onChange={(e) => setNewsForm({ ...newsForm, imageAlt: e.target.value })}
           />
 
           <textarea
-            className="min-h-[70px] w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+            className="input-field min-h-[70px]"
             placeholder="Summary"
             value={newsForm.summary}
             onChange={(e) => setNewsForm({ ...newsForm, summary: e.target.value })}
           />
           <textarea
-            className="min-h-[160px] w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+            className="input-field min-h-[160px]"
             placeholder="Content"
             value={newsForm.content}
             onChange={(e) => setNewsForm({ ...newsForm, content: e.target.value })}
@@ -776,20 +776,20 @@ function AdminDashboard() {
               {newsForm.linksList.map((item, idx) => (
                 <div key={idx} className="grid gap-2 md:grid-cols-[1fr_2fr_auto]">
                   <input
-                    className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+                    className="input-field"
                     placeholder="Label (e.g., Press)"
                     value={item.label}
                     onChange={(e) => updateLinkRow("news", idx, "label", e.target.value)}
                   />
                   <input
-                    className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-slate-100"
+                    className="input-field"
                     placeholder="URL (https://...)"
                     value={item.url}
                     onChange={(e) => updateLinkRow("news", idx, "url", e.target.value)}
                   />
                   <button
                     type="button"
-                    className="rounded-md border border-white/15 px-3 py-2 text-sm text-slate-200 transition hover:border-white/30"
+                    className="btn btn-secondary"
                     onClick={() => removeLinkRow("news", idx)}
                   >
                     Remove
@@ -799,7 +799,7 @@ function AdminDashboard() {
             </div>
             <button
               type="button"
-              className="mt-2 rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:bg-white/20"
+              className="btn btn-secondary mt-2"
               onClick={() => addLinkRow("news")}
             >
               Add link
@@ -810,13 +810,13 @@ function AdminDashboard() {
             <button
               type="submit"
               disabled={newsSave.isPending}
-              className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-70"
+              className="btn btn-primary"
             >
               {newsSave.isPending ? "Saving..." : "Save news"}
             </button>
             <button
               type="button"
-              className="rounded-md border border-white/15 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/30"
+              className="btn btn-secondary"
               onClick={() => setNewsForm(defaultNews)}
             >
               Reset
