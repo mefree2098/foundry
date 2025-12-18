@@ -224,7 +224,13 @@ function AdminDashboard() {
   const [pricingDirty, setPricingDirty] = useState(false);
   const [pricingImportText, setPricingImportText] = useState("");
 
-  const { data: aiUsage, isLoading: aiUsageLoading, isError: aiUsageError, refetch: refetchAiUsage } = useQuery({
+  const {
+    data: aiUsage,
+    isLoading: aiUsageLoading,
+    isError: aiUsageError,
+    isFetching: aiUsageFetching,
+    refetch: refetchAiUsage,
+  } = useQuery({
     queryKey: ["ai-usage"],
     queryFn: fetchAiUsage,
   });
@@ -587,8 +593,8 @@ function AdminDashboard() {
             <div className="text-xs text-slate-300">
               {aiUsage?.updatedAt ? `Last updated ${new Date(aiUsage.updatedAt).toLocaleString()}` : "Usage totals update after AI calls."}
             </div>
-            <button type="button" className="btn btn-secondary" onClick={() => refetchAiUsage()}>
-              Refresh usage
+            <button type="button" className="btn btn-secondary" disabled={aiUsageFetching} onClick={() => refetchAiUsage()}>
+              {aiUsageFetching ? "Refreshing..." : "Refresh usage"}
             </button>
           </div>
 

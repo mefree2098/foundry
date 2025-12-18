@@ -35,12 +35,32 @@ function costForUsage(usage: UsageBucket, price?: PricingModel) {
   return Number((inputCost + outputCost).toFixed(6));
 }
 
+function normalizeModelKey(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9.-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function findPricing(model: string, pricing: Record<string, PricingModel>) {
+  if (pricing[model]) return pricing[model];
+  const normalized = normalizeModelKey(model);
+  if (pricing[normalized]) return pricing[normalized];
+  const suffixIndex = normalized.indexOf("-20");
+  if (suffixIndex > 0) {
+    const trimmed = normalized.slice(0, suffixIndex);
+    if (pricing[trimmed]) return pricing[trimmed];
+  }
+  return undefined;
+}
+
 function summarizeModels(buckets: Record<string, UsageBucket>, pricing: Record<string, PricingModel>) {
   const byModel: Record<string, UsageSummary> = {};
   let totalCost = 0;
   let costKnown = true;
   for (const [model, usage] of Object.entries(buckets)) {
-    const price = pricing[model];
+    const price = findPricing(model, pricing);
     const cost = costForUsage(usage, price);
     if (cost === null) {
       costKnown = false;
