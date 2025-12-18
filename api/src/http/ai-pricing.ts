@@ -65,7 +65,7 @@ function extractNextData(html: string) {
 }
 
 async function fetchOpenAiPricing(): Promise<PricingResult | null> {
-  const urls = ["https://openai.com/api/pricing/", "https://platform.openai.com/docs/pricing"];
+  const urls = ["https://openai.com/api/pricing/?utm_source=chatgpt.com", "https://openai.com/api/pricing/", "https://platform.openai.com/docs/pricing"];
   for (const url of urls) {
     try {
       const res = await fetch(url, {
