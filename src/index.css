@@ -31,6 +31,10 @@
     --input-placeholder: rgba(148, 163, 184, 0.9);
     --input-focus-ring: rgba(255, 0, 127, 0.5);
 
+    /* Dropdown menus */
+    --dropdown-bg: #0b1120;
+    --dropdown-text: var(--color-text);
+
     /* Buttons (admin) */
     --btn-primary-bg: #50c878;
     --btn-primary-bg-hover: #6be59a;
@@ -45,6 +49,7 @@
     font-family: "Inter", "Sora", system-ui, -apple-system, "Segoe UI", sans-serif;
     color: var(--color-text);
     background-color: var(--color-bg);
+    color-scheme: dark;
   }
 
   body {
@@ -120,4 +125,13 @@
 .input-field:focus {
   outline: none;
   box-shadow: 0 0 0 2px var(--input-focus-ring);
+}
+
+select.input-field {
+  color-scheme: dark;
+}
+select.input-field option,
+select.input-field optgroup {
+  background-color: var(--dropdown-bg);
+  color: var(--dropdown-text);
 }

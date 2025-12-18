@@ -46,6 +46,8 @@ const themeVars: ThemeVar[] = [
   { key: "--input-bg", label: "Input bg", kind: "text" },
   { key: "--input-border", label: "Input border", kind: "text" },
   { key: "--input-focus-ring", label: "Input focus ring", kind: "text" },
+  { key: "--dropdown-bg", label: "Dropdown bg", kind: "color" },
+  { key: "--dropdown-text", label: "Dropdown text", kind: "color" },
 ];
 
 function isHexColor(value: string) {

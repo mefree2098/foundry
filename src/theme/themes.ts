@@ -33,6 +33,9 @@ export const themes: Record<"theme1" | "theme2", ThemeDefinition> = {
       "--input-placeholder": "rgba(148, 163, 184, 0.90)",
       "--input-focus-ring": "rgba(255, 0, 127, 0.50)",
 
+      "--dropdown-bg": "#0b1120",
+      "--dropdown-text": "var(--color-text)",
+
       "--btn-primary-bg": "#50c878",
       "--btn-primary-bg-hover": "#6be59a",
       "--btn-primary-text": "#06140f",
@@ -71,6 +74,9 @@ export const themes: Record<"theme1" | "theme2", ThemeDefinition> = {
       "--input-text": "var(--color-text)",
       "--input-placeholder": "rgba(148, 163, 184, 0.90)",
       "--input-focus-ring": "rgba(80, 200, 120, 0.35)",
+
+      "--dropdown-bg": "#000000",
+      "--dropdown-text": "var(--color-text)",
 
       "--btn-primary-bg": "#000000",
       "--btn-primary-bg-hover": "#0a0a0a",
