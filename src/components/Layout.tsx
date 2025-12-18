@@ -5,15 +5,19 @@ import { fetchConfig } from "../lib/api";
 import { Menu, X } from "lucide-react";
 import { applyThemeFromConfig } from "../theme/applyTheme";
 
-const navLinks = [
-  { to: "/", label: "Home" },
-  { to: "/platforms", label: "Platforms" },
-  { to: "/news", label: "News" },
-  { to: "/topics", label: "Topics" },
-  { to: "/subscribe", label: "Subscribe" },
-  { to: "/about", label: "About" },
-  { to: "/admin", label: "Admin" },
+const defaultNavLinks = [
+  { id: "home", label: "Home", href: "/", newTab: false },
+  { id: "platforms", label: "Platforms", href: "/platforms", newTab: false },
+  { id: "news", label: "News", href: "/news", newTab: false },
+  { id: "topics", label: "Topics", href: "/topics", newTab: false },
+  { id: "subscribe", label: "Subscribe", href: "/subscribe", newTab: false },
+  { id: "about", label: "About", href: "/about", newTab: false },
+  { id: "admin", label: "Admin", href: "/admin", newTab: false },
 ];
+
+function isInternalHref(href: string) {
+  return href.startsWith("/");
+}
 
 function Layout() {
   const { data: config } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
@@ -21,6 +25,11 @@ function Layout() {
   const brandName = "New Technology Research";
   const footerTagline = config?.footerTagline || "AI-native business platforms, powered by your AI";
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const navLinks =
+    config?.nav?.links && config.nav.links.length
+      ? config.nav.links.filter((l) => (l.enabled ?? true) && l.label && l.href)
+      : defaultNavLinks;
 
   useEffect(() => {
     applyThemeFromConfig(config);
@@ -64,41 +73,66 @@ function Layout() {
               {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
             <div className="hidden items-center gap-4 sm:flex">
-              {navLinks.map((link) => (
-                <NavLink
-                  key={link.to}
-                  to={link.to}
-                  className={({ isActive }) =>
-                    [
-                      "rounded-full px-3 py-2 transition",
-                      isActive ? "bg-ntr-emerald/20 text-ntr-emerald-bright" : "text-slate-200 hover:text-white",
-                    ].join(" ")
-                  }
-                >
-                  {link.label}
-                </NavLink>
-              ))}
+              {navLinks.map((link) =>
+                isInternalHref(link.href) ? (
+                  <NavLink
+                    key={link.id}
+                    to={link.href}
+                    className={({ isActive }) =>
+                      [
+                        "rounded-full px-3 py-2 transition",
+                        isActive ? "bg-ntr-emerald/20 text-ntr-emerald-bright" : "text-slate-200 hover:text-white",
+                      ].join(" ")
+                    }
+                  >
+                    {link.label}
+                  </NavLink>
+                ) : (
+                  <a
+                    key={link.id}
+                    href={link.href}
+                    target={link.newTab ? "_blank" : undefined}
+                    rel={link.newTab ? "noreferrer" : undefined}
+                    className="rounded-full px-3 py-2 text-slate-200 transition hover:text-white"
+                  >
+                    {link.label}
+                  </a>
+                ),
+              )}
             </div>
           </div>
         </nav>
         {menuOpen && (
           <div className="sm:hidden">
             <div className="mx-4 mb-4 space-y-2 rounded-2xl border border-white/10 bg-slate-950/80 p-3 shadow-lg backdrop-blur">
-              {navLinks.map((link) => (
-                <NavLink
-                  key={link.to}
-                  to={link.to}
-                  onClick={() => setMenuOpen(false)}
-                  className={({ isActive }) =>
-                    [
-                      "block rounded-xl px-3 py-2 text-sm font-medium transition",
-                      isActive ? "bg-ntr-emerald/20 text-ntr-emerald-bright" : "text-slate-100 hover:bg-white/5",
-                    ].join(" ")
-                  }
-                >
-                  {link.label}
-                </NavLink>
-              ))}
+              {navLinks.map((link) =>
+                isInternalHref(link.href) ? (
+                  <NavLink
+                    key={link.id}
+                    to={link.href}
+                    onClick={() => setMenuOpen(false)}
+                    className={({ isActive }) =>
+                      [
+                        "block rounded-xl px-3 py-2 text-sm font-medium transition",
+                        isActive ? "bg-ntr-emerald/20 text-ntr-emerald-bright" : "text-slate-100 hover:bg-white/5",
+                      ].join(" ")
+                    }
+                  >
+                    {link.label}
+                  </NavLink>
+                ) : (
+                  <a
+                    key={link.id}
+                    href={link.href}
+                    target={link.newTab ? "_blank" : undefined}
+                    rel={link.newTab ? "noreferrer" : undefined}
+                    onClick={() => setMenuOpen(false)}
+                    className="block rounded-xl px-3 py-2 text-sm font-medium text-slate-100 transition hover:bg-white/5"
+                  >
+                    {link.label}
+                  </a>
+                ),
+              )}
             </div>
           </div>
         )}

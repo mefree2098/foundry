@@ -8,6 +8,7 @@ import { AI_PROVIDERS } from "../lib/aiProviders";
 
 type TrustCard = NonNullable<NonNullable<NonNullable<SiteConfig["home"]>["trustSection"]>["cards"]>[number];
 type AiSectionProvider = NonNullable<NonNullable<NonNullable<SiteConfig["home"]>["aiSection"]>["providers"]>[number];
+type HomeSection = NonNullable<NonNullable<NonNullable<SiteConfig["home"]>["sections"]>>[number];
 
 const iconOptions = [
   { value: "", label: "None" },
@@ -45,6 +46,14 @@ function moveItem<T>(arr: T[], from: number, to: number) {
 }
 
 const defaults: NonNullable<SiteConfig["home"]> = {
+  sections: [
+    { id: "trust", type: "trust", enabled: true },
+    { id: "ai", type: "ai", enabled: true },
+    { id: "platforms", type: "platforms", enabled: true, maxItems: 6, title: "Featured platforms" },
+    { id: "news", type: "news", enabled: true, maxItems: 6, title: "Latest news" },
+    { id: "topics", type: "topics", enabled: true, maxItems: 6, title: "Explore by topic" },
+    { id: "newsletter", type: "newsletter", enabled: true },
+  ],
   trustSection: {
     title: "Trust & control",
     cards: [
@@ -84,6 +93,7 @@ function HomepageEditor() {
   const mutation = useMutation({ mutationFn: saveConfig });
 
   const [home, setHome] = useState<SiteConfig["home"]>(defaults);
+  const [newSectionType, setNewSectionType] = useState<string>("trust");
   const [newProviderPreset, setNewProviderPreset] = useState<string>(AI_PROVIDERS[0]?.id || "openai");
 
   useEffect(() => {
@@ -91,6 +101,7 @@ function HomepageEditor() {
     setHome({
       ...defaults,
       ...(config.home || {}),
+      sections: config.home?.sections?.length ? config.home.sections : defaults.sections,
       trustSection: {
         ...(defaults.trustSection || {}),
         ...(config.home?.trustSection || {}),
@@ -106,12 +117,75 @@ function HomepageEditor() {
 
   const trustCards = home?.trustSection?.cards || [];
   const aiProviders = home?.aiSection?.providers || [];
+  const sections = home?.sections || [];
 
   const presetById = useMemo(() => Object.fromEntries(AI_PROVIDERS.map((p) => [p.id, p])), []);
 
   const save = (e: FormEvent) => {
     e.preventDefault();
     mutation.mutate({ id: "global", home });
+  };
+
+  const updateSection = (idx: number, patch: Partial<HomeSection>) => {
+    setHome((prev) => {
+      const current = [...(prev?.sections || [])];
+      current[idx] = { ...current[idx], ...patch } as HomeSection;
+      return { ...prev, sections: current };
+    });
+  };
+
+  const addSection = (type: string) => {
+    const normalizedType = (type || "richText").trim() || "richText";
+    setHome((prev) => {
+      const current = [...(prev?.sections || [])];
+      const ids = new Set(current.map((s) => s.id));
+      const id = ensureUniqueId(ids, slugify(normalizedType) || "section");
+      const base: any = { id, type: normalizedType, enabled: true };
+      if (normalizedType === "richText") {
+        base.title = "New section";
+        base.markdown = "Edit this text.";
+      } else if (normalizedType === "cta") {
+        base.title = "Get started";
+        base.subtitle = "Describe the call to action.";
+        base.cta = { primaryText: "Learn more", primaryHref: "/about" };
+      } else if (["platforms", "news", "topics"].includes(normalizedType.toLowerCase())) {
+        base.title = normalizedType[0].toUpperCase() + normalizedType.slice(1);
+        base.maxItems = 6;
+      }
+      current.push(base);
+      return { ...prev, sections: current };
+    });
+  };
+
+  const removeSection = (idx: number) => {
+    setHome((prev) => {
+      const current = [...(prev?.sections || [])];
+      current.splice(idx, 1);
+      return { ...prev, sections: current };
+    });
+  };
+
+  const moveSection = (idx: number, dir: -1 | 1) => {
+    setHome((prev) => {
+      const current = [...(prev?.sections || [])];
+      const nextIdx = idx + dir;
+      if (nextIdx < 0 || nextIdx >= current.length) return prev;
+      return { ...prev, sections: moveItem(current, idx, nextIdx) };
+    });
+  };
+
+  const normalizeSectionIds = () => {
+    setHome((prev) => {
+      const current = [...(prev?.sections || [])];
+      const ids = new Set<string>();
+      const next = current.map((s) => {
+        const base = slugify(s.id || s.title || s.type || "section") || "section";
+        const id = ensureUniqueId(ids, base);
+        ids.add(id);
+        return { ...s, id } as HomeSection;
+      });
+      return { ...prev, sections: next };
+    });
   };
 
   const updateTrustCard = (idx: number, patch: Partial<TrustCard>) => {
@@ -233,6 +307,167 @@ function HomepageEditor() {
         <div className="text-sm text-red-200">Failed to load config.</div>
       ) : (
         <form className="space-y-6" onSubmit={save}>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-100">Homepage sections</div>
+                <div className="text-xs text-slate-300">Add/remove/reorder sections and configure titles.</div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" className="btn btn-secondary" onClick={normalizeSectionIds}>
+                  Normalize IDs
+                </button>
+                <select
+                  className="input-field max-w-[240px]"
+                  value={newSectionType}
+                  onChange={(e) => setNewSectionType(e.target.value)}
+                >
+                  <option value="trust">Add: Trust</option>
+                  <option value="ai">Add: AI</option>
+                  <option value="platforms">Add: Platforms</option>
+                  <option value="news">Add: News</option>
+                  <option value="topics">Add: Topics</option>
+                  <option value="newsletter">Add: Newsletter</option>
+                  <option value="richText">Add: Rich text</option>
+                  <option value="cta">Add: CTA</option>
+                </select>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => addSection(newSectionType)}
+                >
+                  Add section
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              {sections.map((s, idx) => {
+                const type = String(s.type || "");
+                const isRichText = type.toLowerCase() === "richtext";
+                const isCta = type.toLowerCase() === "cta";
+                const needsCount = ["platforms", "news", "topics"].includes(type.toLowerCase());
+                return (
+                  <div key={s.id || idx} className="rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <label className="flex items-center gap-2 text-xs text-slate-200">
+                          <input
+                            type="checkbox"
+                            checked={s.enabled ?? true}
+                            onChange={(e) => updateSection(idx, { enabled: e.target.checked })}
+                          />
+                          Enabled
+                        </label>
+                        <div className="text-xs text-slate-300">
+                          <span className="font-semibold text-slate-100">{type}</span> · <span className="text-slate-400">{s.id}</span>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="button" className="btn btn-secondary" disabled={idx === 0} onClick={() => moveSection(idx, -1)}>
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={idx === sections.length - 1}
+                          onClick={() => moveSection(idx, 1)}
+                        >
+                          ↓
+                        </button>
+                        <button type="button" className="btn btn-secondary" onClick={() => removeSection(idx)}>
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <input
+                        className="input-field"
+                        placeholder="Title"
+                        value={(s.title as string) || ""}
+                        onChange={(e) => updateSection(idx, { title: e.target.value })}
+                      />
+                      <input
+                        className="input-field"
+                        placeholder="Subtitle (optional)"
+                        value={(s.subtitle as string) || ""}
+                        onChange={(e) => updateSection(idx, { subtitle: e.target.value })}
+                      />
+
+                      {needsCount ? (
+                        <input
+                          className="input-field"
+                          type="number"
+                          min={1}
+                          max={24}
+                          placeholder="Max items"
+                          value={typeof s.maxItems === "number" ? s.maxItems : 6}
+                          onChange={(e) => updateSection(idx, { maxItems: Number(e.target.value) || 6 })}
+                        />
+                      ) : null}
+
+                      {isRichText ? (
+                        <textarea
+                          className="input-field md:col-span-2 min-h-[120px]"
+                          placeholder="Text (supports line breaks)"
+                          value={(s.markdown as string) || ""}
+                          onChange={(e) => updateSection(idx, { markdown: e.target.value })}
+                        />
+                      ) : null}
+
+                      {isCta ? (
+                        <div className="md:col-span-2 grid gap-2 md:grid-cols-2">
+                          <input
+                            className="input-field"
+                            placeholder="Primary button text"
+                            value={(s.cta as any)?.primaryText || ""}
+                            onChange={(e) =>
+                              updateSection(idx, {
+                                cta: { ...((s.cta as any) || {}), primaryText: e.target.value },
+                              } as any)
+                            }
+                          />
+                          <input
+                            className="input-field"
+                            placeholder="Primary href"
+                            value={(s.cta as any)?.primaryHref || ""}
+                            onChange={(e) =>
+                              updateSection(idx, {
+                                cta: { ...((s.cta as any) || {}), primaryHref: e.target.value },
+                              } as any)
+                            }
+                          />
+                          <input
+                            className="input-field"
+                            placeholder="Secondary button text"
+                            value={(s.cta as any)?.secondaryText || ""}
+                            onChange={(e) =>
+                              updateSection(idx, {
+                                cta: { ...((s.cta as any) || {}), secondaryText: e.target.value },
+                              } as any)
+                            }
+                          />
+                          <input
+                            className="input-field"
+                            placeholder="Secondary href"
+                            value={(s.cta as any)?.secondaryHref || ""}
+                            onChange={(e) =>
+                              updateSection(idx, {
+                                cta: { ...((s.cta as any) || {}), secondaryHref: e.target.value },
+                              } as any)
+                            }
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+              {sections.length === 0 ? <div className="text-xs text-slate-400">No homepage sections configured.</div> : null}
+            </div>
+          </div>
+
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>

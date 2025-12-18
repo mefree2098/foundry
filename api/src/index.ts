@@ -13,3 +13,4 @@ import "./http/subscriptions-get.js";
 import "./http/subscriptions-unsubscribe.js";
 import "./http/email-send.js";
 import "./http/email-stats.js";
+import "./http/ai-chat.js";

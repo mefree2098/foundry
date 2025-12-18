@@ -7,6 +7,7 @@ import {
   deleteNews,
   deletePlatform,
   deleteTopic,
+  fetchConfig,
   fetchNews,
   fetchPlatforms,
   fetchTopics,
@@ -18,6 +19,9 @@ import {
 import ConfigEditor from "./ConfigEditor";
 import HomepageEditor from "./HomepageEditor";
 import AdminEmailSection from "../components/AdminEmailSection";
+import ContentSchemaEditor from "./ContentSchemaEditor";
+import type { SiteConfig } from "../lib/types";
+import AdminAiAssistant from "./AdminAiAssistant";
 
 type LinkItem = { label: string; url: string };
 
@@ -30,12 +34,14 @@ type PlatformForm = {
   heroImageUrl: string;
   topics: string[];
   linksList: LinkItem[];
+  custom: Record<string, unknown>;
 };
 
 type TopicForm = {
   id: string;
   name: string;
   description: string;
+  custom: Record<string, unknown>;
 };
 
 type NewsForm = {
@@ -51,6 +57,7 @@ type NewsForm = {
   platformIds: string[];
   topics: string[];
   linksList: LinkItem[];
+  custom: Record<string, unknown>;
 };
 
 const defaultPlatform: PlatformForm = {
@@ -62,9 +69,10 @@ const defaultPlatform: PlatformForm = {
   heroImageUrl: "",
   topics: [],
   linksList: [{ label: "", url: "" }],
+  custom: {},
 };
 
-const defaultTopic: TopicForm = { id: "", name: "", description: "" };
+const defaultTopic: TopicForm = { id: "", name: "", description: "", custom: {} };
 
 const defaultNews: NewsForm = {
   id: "",
@@ -79,6 +87,7 @@ const defaultNews: NewsForm = {
   platformIds: [],
   topics: [],
   linksList: [{ label: "", url: "" }],
+  custom: {},
 };
 
 function toLinkRecord(list: LinkItem[]) {
@@ -86,6 +95,15 @@ function toLinkRecord(list: LinkItem[]) {
     .map((item) => ({ label: item.label.trim(), url: item.url.trim() }))
     .filter((item) => item.label && item.url);
   return entries.length ? Object.fromEntries(entries.map((item) => [item.label, item.url])) : undefined;
+}
+
+function cleanCustom(custom: Record<string, unknown> | undefined) {
+  const entries = Object.entries(custom || {}).filter(([, v]) => {
+    if (v === undefined || v === null) return false;
+    if (typeof v === "string" && !v.trim()) return false;
+    return true;
+  });
+  return entries.length ? Object.fromEntries(entries) : undefined;
 }
 
 async function uploadImage(file: File) {
@@ -99,6 +117,77 @@ async function uploadImage(file: File) {
   return sas.blobUrl;
 }
 
+type FieldDef = NonNullable<NonNullable<NonNullable<SiteConfig["content"]>["schemas"]>["platforms"]>[number];
+
+function normalizeCustomValue(field: FieldDef, raw: unknown) {
+  const t = String(field.type || "text").toLowerCase();
+  if (t === "number") {
+    const n = typeof raw === "number" ? raw : Number(String(raw ?? "").trim());
+    return Number.isFinite(n) ? n : undefined;
+  }
+  if (t === "boolean") return Boolean(raw);
+  const s = String(raw ?? "");
+  return s.trim() ? s : undefined;
+}
+
+function CustomFieldsEditor({
+  fields,
+  value,
+  onChange,
+}: {
+  fields: FieldDef[];
+  value: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  if (!fields.length) return null;
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <div className="text-xs text-slate-300 mb-2">Custom fields</div>
+      <div className="grid gap-3 md:grid-cols-2">
+        {fields.map((f) => {
+          const key = f.id;
+          const type = String(f.type || "text").toLowerCase();
+          const current = value?.[key];
+          const placeholder = f.placeholder || f.label;
+
+          return (
+            <label key={key} className={type === "textarea" ? "md:col-span-2 grid gap-1" : "grid gap-1"}>
+              <span className="text-xs text-slate-300">{f.label}</span>
+              {type === "boolean" ? (
+                <div className="flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(current)}
+                    onChange={(e) => onChange({ ...(value || {}), [key]: normalizeCustomValue(f, e.target.checked) })}
+                  />
+                  <span className="text-xs text-slate-200">{f.help || "Enabled"}</span>
+                </div>
+              ) : type === "textarea" ? (
+                <textarea
+                  className="input-field min-h-[100px]"
+                  placeholder={placeholder}
+                  value={typeof current === "string" ? current : current == null ? "" : String(current)}
+                  onChange={(e) => onChange({ ...(value || {}), [key]: normalizeCustomValue(f, e.target.value) })}
+                />
+              ) : (
+                <input
+                  className="input-field"
+                  type={type === "url" ? "url" : type === "number" ? "number" : "text"}
+                  placeholder={placeholder}
+                  value={typeof current === "string" ? current : current == null ? "" : String(current)}
+                  onChange={(e) => onChange({ ...(value || {}), [key]: normalizeCustomValue(f, e.target.value) })}
+                />
+              )}
+              {f.help && type !== "boolean" ? <span className="text-xs text-slate-400">{f.help}</span> : null}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function AdminDashboard() {
   const queryClient = useQueryClient();
   const { loading: authLoading, isAdmin } = useAuth();
@@ -106,6 +195,7 @@ function AdminDashboard() {
   const { data: platforms = [] } = useQuery({ queryKey: ["platforms"], queryFn: fetchPlatforms });
   const { data: topics = [] } = useQuery({ queryKey: ["topics"], queryFn: fetchTopics });
   const { data: news = [] } = useQuery({ queryKey: ["news", { all: true }], queryFn: () => fetchNews() });
+  const { data: config } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
 
   const sortedPlatforms = useMemo(() => [...platforms].sort((a, b) => (a.name || "").localeCompare(b.name || "")), [platforms]);
   const sortedTopics = useMemo(() => [...topics].sort((a, b) => (a.name || "").localeCompare(b.name || "")), [topics]);
@@ -215,13 +305,19 @@ function AdminDashboard() {
       heroImageUrl: p.heroImageUrl || "",
       topics: p.topics || [],
       linksList: p.links ? Object.entries(p.links).map(([label, url]) => ({ label, url })) : [{ label: "", url: "" }],
+      custom: (p.custom as Record<string, unknown> | undefined) || {},
     });
   };
 
   const loadTopic = (id: string) => {
     const t = topics.find((x) => x.id === id);
     if (!t) return;
-    setTopicForm({ id: t.id || "", name: t.name || "", description: t.description || "" });
+    setTopicForm({
+      id: t.id || "",
+      name: t.name || "",
+      description: t.description || "",
+      custom: (t.custom as Record<string, unknown> | undefined) || {},
+    });
   };
 
   const loadNews = (id: string) => {
@@ -240,6 +336,7 @@ function AdminDashboard() {
       platformIds: n.platformIds || [],
       topics: n.topics || [],
       linksList: n.links ? Object.entries(n.links).map(([label, url]) => ({ label, url })) : [{ label: "", url: "" }],
+      custom: (n.custom as Record<string, unknown> | undefined) || {},
     });
   };
 
@@ -286,6 +383,7 @@ function AdminDashboard() {
       heroImageUrl: platformForm.heroImageUrl.trim() || undefined,
       topics: platformForm.topics.length ? platformForm.topics : undefined,
       links: toLinkRecord(platformForm.linksList),
+      custom: cleanCustom(platformForm.custom),
     });
   };
 
@@ -296,6 +394,7 @@ function AdminDashboard() {
       id: topicForm.id.trim(),
       name: topicForm.name.trim(),
       description: topicForm.description.trim() || undefined,
+      custom: cleanCustom(topicForm.custom),
     });
   };
 
@@ -315,6 +414,7 @@ function AdminDashboard() {
       platformIds: newsForm.platformIds.length ? newsForm.platformIds : undefined,
       topics: newsForm.topics.length ? newsForm.topics : undefined,
       links: toLinkRecord(newsForm.linksList),
+      custom: cleanCustom(newsForm.custom),
     });
   };
 
@@ -494,6 +594,12 @@ function AdminDashboard() {
             </button>
           </div>
 
+          <CustomFieldsEditor
+            fields={((config?.content?.schemas?.platforms || []) as FieldDef[]).filter((f) => f.id && f.label)}
+            value={platformForm.custom}
+            onChange={(next) => setPlatformForm((prev) => ({ ...prev, custom: next }))}
+          />
+
           <div className="flex gap-3">
             <button
               type="submit"
@@ -563,6 +669,13 @@ function AdminDashboard() {
             value={topicForm.description}
             onChange={(e) => setTopicForm({ ...topicForm, description: e.target.value })}
           />
+
+          <CustomFieldsEditor
+            fields={((config?.content?.schemas?.topics || []) as FieldDef[]).filter((f) => f.id && f.label)}
+            value={topicForm.custom}
+            onChange={(next) => setTopicForm((prev) => ({ ...prev, custom: next }))}
+          />
+
           <div className="flex gap-3">
             <button
               type="submit"
@@ -807,6 +920,12 @@ function AdminDashboard() {
             </button>
           </div>
 
+          <CustomFieldsEditor
+            fields={((config?.content?.schemas?.news || []) as FieldDef[]).filter((f) => f.id && f.label)}
+            value={newsForm.custom}
+            onChange={(next) => setNewsForm((prev) => ({ ...prev, custom: next }))}
+          />
+
           <div className="flex gap-3">
             <button
               type="submit"
@@ -838,6 +957,8 @@ function AdminDashboard() {
         </form>
       </SectionCard>
 
+      <ContentSchemaEditor />
+      <AdminAiAssistant />
       <ConfigEditor />
       <HomepageEditor />
       <AdminEmailSection />

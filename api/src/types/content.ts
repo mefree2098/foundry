@@ -13,6 +13,7 @@ export const topicSchema = z.object({
   description: z.string().optional(),
   colorHint: z.string().optional(),
   icon: z.string().optional(),
+  custom: z.record(z.string(), z.any()).optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
@@ -30,6 +31,7 @@ export const platformSchema = z.object({
   topics: slugSchema.array().optional(),
   isFeatured: z.boolean().optional(),
   sortOrder: z.number().optional(),
+  custom: z.record(z.string(), z.any()).optional(),
   theme: z
     .object({
       accentColor: z.string().optional(),
@@ -62,6 +64,7 @@ export const newsSchema = z.object({
   platformIds: slugSchema.array().optional(),
   topics: slugSchema.array().optional(),
   isFeatured: z.boolean().optional(),
+  custom: z.record(z.string(), z.any()).optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
@@ -97,6 +100,34 @@ export type EmailSettings = z.infer<typeof emailSettingsSchema>;
 
 const cssVarMapSchema = z.record(z.string(), z.string());
 
+const navLinkSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  href: z.string().min(1),
+  enabled: z.boolean().optional(),
+  newTab: z.boolean().optional(),
+});
+
+const homeSectionSchema = z
+  .object({
+    id: z.string().min(1),
+    type: z.string().min(1),
+    enabled: z.boolean().optional(),
+    title: z.string().optional(),
+    subtitle: z.string().optional(),
+    maxItems: z.number().int().positive().max(24).optional(),
+    markdown: z.string().optional(),
+    cta: z
+      .object({
+        primaryText: z.string().optional(),
+        primaryHref: z.string().optional(),
+        secondaryText: z.string().optional(),
+        secondaryHref: z.string().optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
 export const siteConfigSchema = z.object({
   id: z.string().default("global"),
   palette: z
@@ -129,6 +160,11 @@ export const siteConfigSchema = z.object({
     })
     .optional(),
   logoUrl: urlSchema.optional(),
+  nav: z
+    .object({
+      links: navLinkSchema.array().optional(),
+    })
+    .optional(),
   homeTagline: z.string().optional(),
   footerTagline: z.string().optional(),
   featuredPlatformIds: slugSchema.array().optional(),
@@ -147,6 +183,7 @@ export const siteConfigSchema = z.object({
     .optional(),
   home: z
     .object({
+      sections: homeSectionSchema.array().optional(),
       trustSection: z
         .object({
           title: z.string().optional(),
@@ -182,6 +219,50 @@ export const siteConfigSchema = z.object({
     })
     .optional(),
   emailSettings: emailSettingsSchema.optional(),
+  content: z
+    .object({
+      schemas: z
+        .object({
+          platforms: z
+            .array(
+              z.object({
+                id: z.string().min(1),
+                label: z.string().min(1),
+                type: z.string().min(1),
+                required: z.boolean().optional(),
+                placeholder: z.string().optional(),
+                help: z.string().optional(),
+              }),
+            )
+            .optional(),
+          news: z
+            .array(
+              z.object({
+                id: z.string().min(1),
+                label: z.string().min(1),
+                type: z.string().min(1),
+                required: z.boolean().optional(),
+                placeholder: z.string().optional(),
+                help: z.string().optional(),
+              }),
+            )
+            .optional(),
+          topics: z
+            .array(
+              z.object({
+                id: z.string().min(1),
+                label: z.string().min(1),
+                type: z.string().min(1),
+                required: z.boolean().optional(),
+                placeholder: z.string().optional(),
+                help: z.string().optional(),
+              }),
+            )
+            .optional(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 export type SiteConfig = z.infer<typeof siteConfigSchema>;
 

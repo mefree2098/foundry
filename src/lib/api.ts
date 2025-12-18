@@ -86,3 +86,22 @@ export const fetchEmailStats = () =>
     lastSentAt?: string;
     lastError?: string;
   }>("/email/stats");
+
+export type AiChatMessage = { role: "user" | "assistant"; content: string };
+export type AiChatAction =
+  | { type: "config.merge"; value: unknown }
+  | { type: "platform.upsert"; value: unknown }
+  | { type: "topic.upsert"; value: unknown }
+  | { type: "news.upsert"; value: unknown }
+  | { type: "platform.delete"; id: string }
+  | { type: "topic.delete"; id: string }
+  | { type: "news.delete"; id: string };
+
+export type AiChatResponse = { assistantMessage: string; actions?: AiChatAction[] };
+
+export const aiChat = (payload: {
+  apiKey: string;
+  model: string;
+  messages: AiChatMessage[];
+  context?: unknown;
+}) => sendJson<AiChatResponse>("/ai/chat", "POST", payload);

@@ -13,9 +13,21 @@ const defaults: SiteConfig = {
   palette: { primary: "#005b50", secondary: "#50c878" },
   heroBadges: [],
   theme: { active: "theme1", themes: [themes.theme1, themes.theme2] },
+  nav: {
+    links: [
+      { id: "home", label: "Home", href: "/" },
+      { id: "platforms", label: "Platforms", href: "/platforms" },
+      { id: "news", label: "News", href: "/news" },
+      { id: "topics", label: "Topics", href: "/topics" },
+      { id: "subscribe", label: "Subscribe", href: "/subscribe" },
+      { id: "about", label: "About", href: "/about" },
+      { id: "admin", label: "Admin", href: "/admin" },
+    ],
+  },
 };
 
 type ThemeVar = { key: string; label: string; kind: "color" | "text" };
+type NavLink = NonNullable<NonNullable<SiteConfig["nav"]>["links"]>[number];
 
 const themeVars: ThemeVar[] = [
   { key: "--color-bg", label: "Background", kind: "color" },
@@ -58,6 +70,13 @@ function ensureUniqueId(existingIds: Set<string>, base: string) {
   return next;
 }
 
+function moveItem<T>(arr: T[], from: number, to: number) {
+  const copy = [...arr];
+  const [item] = copy.splice(from, 1);
+  copy.splice(to, 0, item);
+  return copy;
+}
+
 function getThemeList(config: SiteConfig): ThemeDefinition[] {
   const list = (config.theme?.themes || []).filter((t) => t && t.id && t.name && t.vars);
   if (list.length) return list as ThemeDefinition[];
@@ -97,6 +116,9 @@ function ConfigEditor() {
         ...(merged.theme || {}),
         active,
         themes: nextThemes,
+      },
+      nav: {
+        links: merged.nav?.links?.length ? merged.nav.links : defaults.nav?.links,
       },
     });
   }, [config]);
@@ -197,6 +219,57 @@ function ConfigEditor() {
       const active = (prev.theme?.active || list[0].id).trim() || list[0].id;
       const nextActive = active === themeId ? list[0].id : active;
       return { ...prev, theme: { ...(prev.theme || {}), active: nextActive, themes: list } };
+    });
+  };
+
+  const navLinks = form.nav?.links || [];
+
+  const addNavLink = () => {
+    setForm((prev) => {
+      const links = [...(prev.nav?.links || [])];
+      const ids = new Set(links.map((l) => l.id));
+      const id = ensureUniqueId(ids, "new-link");
+      links.push({ id, label: "New link", href: "/", enabled: true });
+      return { ...prev, nav: { ...(prev.nav || {}), links } };
+    });
+  };
+
+  const updateNavLink = (idx: number, patch: Partial<NavLink>) => {
+    setForm((prev) => {
+      const links = [...(prev.nav?.links || [])];
+      links[idx] = { ...links[idx], ...patch };
+      return { ...prev, nav: { ...(prev.nav || {}), links } };
+    });
+  };
+
+  const removeNavLink = (idx: number) => {
+    setForm((prev) => {
+      const links = [...(prev.nav?.links || [])];
+      links.splice(idx, 1);
+      return { ...prev, nav: { ...(prev.nav || {}), links } };
+    });
+  };
+
+  const moveNavLink = (idx: number, dir: -1 | 1) => {
+    setForm((prev) => {
+      const links = [...(prev.nav?.links || [])];
+      const nextIdx = idx + dir;
+      if (nextIdx < 0 || nextIdx >= links.length) return prev;
+      return { ...prev, nav: { ...(prev.nav || {}), links: moveItem(links, idx, nextIdx) } };
+    });
+  };
+
+  const normalizeNavIds = () => {
+    setForm((prev) => {
+      const links = [...(prev.nav?.links || [])];
+      const ids = new Set<string>();
+      const next = links.map((l) => {
+        const base = slugify(l.id || l.label || "link") || "link";
+        const id = ensureUniqueId(ids, base);
+        ids.add(id);
+        return { ...l, id };
+      });
+      return { ...prev, nav: { ...(prev.nav || {}), links: next } };
     });
   };
 
@@ -417,13 +490,83 @@ function ConfigEditor() {
                 }}
             />
           </div>
+          </div>
           <input
             className="input-field"
             placeholder="Footer tagline"
             value={form.footerTagline || ""}
             onChange={(e) => setForm({ ...form, footerTagline: e.target.value })}
           />
+
+          <div className="col-span-2 rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-100">Navigation</div>
+                <div className="text-xs text-slate-300">Add, remove, rename, and reorder header links.</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" className="btn btn-secondary" onClick={normalizeNavIds}>
+                  Normalize IDs
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={addNavLink}>
+                  Add link
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {navLinks.map((l, idx) => (
+                <div key={l.id || idx} className="grid gap-2 md:grid-cols-[110px_1fr_2fr_90px_auto] items-center">
+                  <label className="flex items-center gap-2 text-xs text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={l.enabled ?? true}
+                      onChange={(e) => updateNavLink(idx, { enabled: e.target.checked })}
+                    />
+                    Enabled
+                  </label>
+                  <input
+                    className="input-field"
+                    placeholder="Label"
+                    value={l.label || ""}
+                    onChange={(e) => updateNavLink(idx, { label: e.target.value })}
+                  />
+                  <input
+                    className="input-field"
+                    placeholder="Href (/path or https://...)"
+                    value={l.href || ""}
+                    onChange={(e) => updateNavLink(idx, { href: e.target.value })}
+                  />
+                  <label className="flex items-center gap-2 text-xs text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={l.newTab ?? false}
+                      onChange={(e) => updateNavLink(idx, { newTab: e.target.checked })}
+                    />
+                    New tab
+                  </label>
+                  <div className="flex gap-2 justify-end">
+                    <button type="button" className="btn btn-secondary" disabled={idx === 0} onClick={() => moveNavLink(idx, -1)}>
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={idx === navLinks.length - 1}
+                      onClick={() => moveNavLink(idx, 1)}
+                    >
+                      ↓
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={() => removeNavLink(idx)}>
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {navLinks.length === 0 ? <div className="text-xs text-slate-400">No links configured.</div> : null}
+            </div>
           </div>
+
           <div className="col-span-2">
             <div className="text-xs text-slate-300 mb-2">Featured platforms</div>
             <div className="flex flex-wrap gap-2">
