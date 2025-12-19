@@ -588,7 +588,7 @@ function ConfigEditor() {
               />
             </div>
             <div className="mt-2 text-xs text-slate-400">
-              Placeholders: {"{{name}}"}, {"{{email}}"}, {"{{subject}}"}; email is sent via ACS using Admin > Email & notifications. Enable the Contact
+              Placeholders: {"{{name}}"}, {"{{email}}"}, {"{{subject}}"}; email is sent via ACS using Admin &gt; Email & notifications. Enable the Contact
               section in Homepage sections to display the form.
             </div>
           </div>
