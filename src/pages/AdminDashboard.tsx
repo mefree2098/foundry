@@ -8,6 +8,7 @@ import {
   deletePlatform,
   deleteTopic,
   fetchConfig,
+  fetchContactSubmissions,
   fetchAiUsage,
   fetchNews,
   fetchPlatforms,
@@ -63,6 +64,19 @@ type NewsForm = {
   topics: string[];
   linksList: LinkItem[];
   custom: Record<string, unknown>;
+};
+
+type ContactSubmission = {
+  id: string;
+  name: string;
+  email: string;
+  subject?: string;
+  message: string;
+  company?: string;
+  phone?: string;
+  pageUrl?: string;
+  createdAt: string;
+  status?: string;
 };
 
 const defaultPlatform: PlatformForm = {
@@ -201,6 +215,17 @@ function AdminDashboard() {
   const { data: topics = [] } = useQuery({ queryKey: ["topics"], queryFn: fetchTopics });
   const { data: news = [] } = useQuery({ queryKey: ["news", { all: true }], queryFn: () => fetchNews() });
   const { data: config } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
+  const {
+    data: contactSubmissions = [],
+    isLoading: contactLoading,
+    isError: contactError,
+    isFetching: contactFetching,
+    refetch: refetchContactSubmissions,
+  } = useQuery({
+    queryKey: ["contact-submissions"],
+    queryFn: () => fetchContactSubmissions(50),
+    enabled: isAdmin,
+  });
 
   const sortedPlatforms = useMemo(() => [...platforms].sort((a, b) => (a.name || "").localeCompare(b.name || "")), [platforms]);
   const sortedTopics = useMemo(() => [...topics].sort((a, b) => (a.name || "").localeCompare(b.name || "")), [topics]);
@@ -506,6 +531,9 @@ function AdminDashboard() {
       </SectionCard>
     );
   }
+
+  const contactEnabled = Boolean(config?.contact?.enabled);
+  const contactRecipient = config?.contact?.recipientEmail || "";
 
   const platformEmbedHtml = typeof platformForm.custom?.embedHtml === "string" ? platformForm.custom.embedHtml : "";
   const platformEmbedHeightRaw = platformForm.custom?.embedHeight;
@@ -1400,6 +1428,68 @@ function AdminDashboard() {
             </button>
           </div>
         </form>
+      </SectionCard>
+
+      <SectionCard title="Contact submissions">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div className="text-xs text-slate-300">
+            {contactEnabled
+              ? `Form enabled${contactRecipient ? ` · Recipient: ${contactRecipient}` : ""}`
+              : "Form disabled. Enable it in Theme & Config > Contact form."}
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={contactFetching}
+            onClick={() => refetchContactSubmissions()}
+          >
+            {contactFetching ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+
+        {contactLoading ? (
+          <div className="text-sm text-slate-300">Loading contact submissions...</div>
+        ) : contactError ? (
+          <div className="text-sm text-red-200">Failed to load contact submissions.</div>
+        ) : (contactSubmissions as ContactSubmission[]).length === 0 ? (
+          <div className="text-sm text-slate-300">No submissions yet.</div>
+        ) : (
+          <div className="space-y-3">
+            {(contactSubmissions as ContactSubmission[]).map((item) => {
+              const createdAt = item.createdAt ? new Date(item.createdAt).toLocaleString() : "Unknown time";
+              const status = (item.status || "new").toLowerCase();
+              const statusClass =
+                status === "sent"
+                  ? "text-emerald-200"
+                  : status === "failed"
+                    ? "text-red-200"
+                    : "text-slate-200";
+              return (
+                <div key={item.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-100">{item.name}</div>
+                      <div className="text-xs text-slate-300">{item.email}</div>
+                      {item.company ? <div className="text-xs text-slate-400">{item.company}</div> : null}
+                      {item.phone ? <div className="text-xs text-slate-400">{item.phone}</div> : null}
+                    </div>
+                    <div className="text-right text-xs text-slate-300">
+                      <div>{createdAt}</div>
+                      <div className={statusClass}>Status: {status}</div>
+                    </div>
+                  </div>
+                  {item.subject ? <div className="mt-2 text-xs text-slate-300">Subject: {item.subject}</div> : null}
+                  {item.pageUrl ? (
+                    <a className="mt-2 inline-block text-xs text-emerald-200 hover:text-emerald-100" href={item.pageUrl}>
+                      View page
+                    </a>
+                  ) : null}
+                  <div className="mt-3 whitespace-pre-wrap text-sm text-slate-200">{item.message}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </SectionCard>
 
       <ContentSchemaEditor />

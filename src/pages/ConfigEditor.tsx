@@ -25,6 +25,9 @@ const defaults: SiteConfig = {
       { id: "admin", label: "Admin", href: "/admin" },
     ],
   },
+  contact: {
+    enabled: false,
+  },
 };
 
 type ThemeVar = { key: string; label: string; kind: "color" | "text" };
@@ -254,6 +257,19 @@ function ConfigEditor() {
   };
 
   const navLinks = form.nav?.links || [];
+  const updateContactField = (field: keyof NonNullable<SiteConfig["contact"]>, value: string | boolean) => {
+    setForm((prev) => {
+      const next = { ...(prev.contact || {}) } as NonNullable<SiteConfig["contact"]>;
+      if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (trimmed) next[field] = trimmed as any;
+        else delete (next as Record<string, unknown>)[field as string];
+      } else {
+        next[field] = value as any;
+      }
+      return { ...prev, contact: next };
+    });
+  };
 
   const addNavLink = () => {
     setForm((prev) => {
@@ -535,6 +551,47 @@ function ConfigEditor() {
             value={form.footerTagline || ""}
             onChange={(e) => setForm({ ...form, footerTagline: e.target.value })}
           />
+
+          <div className="col-span-2 rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-100">Contact form</div>
+                <div className="text-xs text-slate-300">Store submissions and email them to your team.</div>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.contact?.enabled)}
+                  onChange={(e) => updateContactField("enabled", e.target.checked)}
+                />
+                Enabled
+              </label>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <input
+                className="input-field"
+                placeholder="Recipient email"
+                value={form.contact?.recipientEmail || ""}
+                onChange={(e) => updateContactField("recipientEmail", e.target.value)}
+              />
+              <input
+                className="input-field"
+                placeholder="Subject template (e.g., Contact: {{subject}})"
+                value={form.contact?.subjectTemplate || ""}
+                onChange={(e) => updateContactField("subjectTemplate", e.target.value)}
+              />
+              <textarea
+                className="input-field md:col-span-2 min-h-[80px]"
+                placeholder="Success message (optional)"
+                value={form.contact?.successMessage || ""}
+                onChange={(e) => updateContactField("successMessage", e.target.value)}
+              />
+            </div>
+            <div className="mt-2 text-xs text-slate-400">
+              Placeholders: {"{{name}}"}, {"{{email}}"}, {"{{subject}}"}; email is sent via ACS using Admin > Email & notifications. Enable the Contact
+              section in Homepage sections to display the form.
+            </div>
+          </div>
 
           <div className="col-span-2 rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">

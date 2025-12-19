@@ -10,6 +10,7 @@ import {
   type SiteConfig as ApiSiteConfig,
   type Subscriber as ApiSubscriber,
   type EmailSettings as ApiEmailSettings,
+  type ContactSettings as ApiContactSettings,
 } from "../types/content";
 
 export type Platform = ApiPlatform;
@@ -18,6 +19,7 @@ export type Topic = ApiTopic;
 export type SiteConfig = ApiSiteConfig;
 export type Subscriber = ApiSubscriber;
 export type EmailSettings = ApiEmailSettings;
+export type ContactSettings = ApiContactSettings;
 
 export type PlatformValidation = z.infer<typeof platformSchema>;
 export type NewsPostValidation = z.infer<typeof newsSchema>;

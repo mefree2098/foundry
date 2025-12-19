@@ -12,6 +12,9 @@ const defaultConfig = {
   theme: {
     active: "theme1",
   },
+  contact: {
+    enabled: false,
+  },
 };
 
 async function getConfig(_req: HttpRequest): Promise<HttpResponseInit> {

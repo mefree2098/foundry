@@ -18,3 +18,5 @@ import "./http/media-list.js";
 import "./http/image-generate.js";
 import "./http/ai-usage.js";
 import "./http/ai-pricing.js";
+import "./http/contact-submit.js";
+import "./http/contact-submissions-get.js";

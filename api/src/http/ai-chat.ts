@@ -27,13 +27,16 @@ Platform map:
 - Navigation: config.nav.links[] items are { id, label, href, enabled?, newTab? }. Internal hrefs start with "/".
 - Platform/news links must be a record (object) of label -> url, not an array.
 - Homepage builder: config.home.sections[] controls order/visibility. Section types supported:
-  - trust, ai, platforms, news, topics, newsletter, richText, cta, embed3d
+  - trust, ai, platforms, news, topics, newsletter, richText, cta, contact, embed3d
   - Common fields: { id, type, enabled?, title?, subtitle?, maxItems?, markdown?, cta? }
   - 3D embeds: use section.embed with { mode: "html" | "threejs", html?, script?, height? }.
 - Platform/news 3D: set item.custom.embedHtml (full HTML) and item.custom.embedHeight (px).
 - Themes: config.theme.themes[] and config.theme.active.
   - Each theme has { id, name, vars } where vars is CSS variable map (e.g., "--color-bg": "#050a0a").
   - Theme intent: Theme 2 uses black background and emerald 3D panels; keep buttons black unless the user requests otherwise.
+- Contact settings:
+  - config.contact has { enabled, recipientEmail, subjectTemplate, successMessage }.
+  - The contact section only renders when config.contact.enabled is true.
 - Extra fields:
   - Field definitions live in config.content.schemas.{platforms|news|topics}[].
   - Values are stored on items under item.custom.<fieldId>.

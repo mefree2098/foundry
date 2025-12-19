@@ -98,6 +98,14 @@ export const emailSettingsSchema = z.object({
 });
 export type EmailSettings = z.infer<typeof emailSettingsSchema>;
 
+export const contactSettingsSchema = z.object({
+  enabled: z.boolean().optional(),
+  recipientEmail: z.string().email().optional(),
+  subjectTemplate: z.string().optional(),
+  successMessage: z.string().optional(),
+});
+export type ContactSettings = z.infer<typeof contactSettingsSchema>;
+
 const cssVarMapSchema = z.record(z.string(), z.string());
 
 const navLinkSchema = z.object({
@@ -228,6 +236,7 @@ export const siteConfigSchema = z.object({
     })
     .optional(),
   emailSettings: emailSettingsSchema.optional(),
+  contact: contactSettingsSchema.optional(),
   ai: z
     .object({
       adminAssistant: z

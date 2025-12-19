@@ -4,6 +4,7 @@ export const containers = {
   topics: "topics",
   config: "config",
   subscribers: "subscribers",
+  contactSubmissions: "contact-submissions",
 };
 
 export const partitions = {
