@@ -16,6 +16,7 @@ Response rules (critical):
 - Prefer actions over explanations. If an action is possible, propose it.
 - If the request is ambiguous, ask a clarifying question and return an empty actions array.
 - Never include secrets (API keys, tokens) in assistantMessage or actions.
+- assistantMessage must be brief and must not include code blocks or full configuration payloads.
 
 Action rules:
 - Use "config.merge" for site configuration changes (themes, nav, homepage sections, custom field schemas).
@@ -104,6 +105,54 @@ type StreamEvent =
   | { type: "done"; assistantMessage: string; actions: AdminAiAction[] }
   | { type: "error"; message: string };
 
+function parseAiResponse(raw: string): { assistantMessage: string; actions: AdminAiAction[] } {
+  const trimmed = (raw || "").trim();
+  if (!trimmed) return { assistantMessage: "", actions: [] };
+
+  const attemptParse = (value: string) => {
+    try {
+      return JSON.parse(value) as any;
+    } catch {
+      return null;
+    }
+  };
+
+  let parsed: any = attemptParse(trimmed);
+
+  if (!parsed && trimmed.startsWith("```")) {
+    const fenceEnd = trimmed.lastIndexOf("```");
+    if (fenceEnd > 3) {
+      const inner = trimmed.slice(trimmed.indexOf("\n") + 1, fenceEnd).trim();
+      parsed = attemptParse(inner);
+    }
+  }
+
+  if (!parsed) {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start !== -1 && end !== -1 && end > start) {
+      parsed = attemptParse(trimmed.slice(start, end + 1));
+    }
+  }
+
+  const validated = parsed ? responseSchema.safeParse(parsed) : null;
+  if (validated?.success) {
+    return {
+      assistantMessage: validated.data.assistantMessage || "",
+      actions: (validated.data.actions || []) as AdminAiAction[],
+    };
+  }
+
+  if (parsed && typeof parsed === "object" && parsed.assistantMessage && Array.isArray(parsed.actions)) {
+    return {
+      assistantMessage: String(parsed.assistantMessage || ""),
+      actions: parsed.actions as AdminAiAction[],
+    };
+  }
+
+  return { assistantMessage: trimmed, actions: [] };
+}
+
 async function streamChat(
   {
     apiKey,
@@ -149,9 +198,9 @@ async function streamChat(
     clearTimeout(timeout);
   }
 
-  if (!upstream.ok) {
-    const text = await upstream.text();
-    return { status: 502, body: text || `Upstream error: ${upstream.status}` };
+      if (!upstream.ok) {
+        const text = await upstream.text();
+        return { status: 502, body: text || `Upstream error: ${upstream.status}` };
   }
 
   if (!upstream.body) {
@@ -215,18 +264,9 @@ async function streamChat(
         send({ type: "error", message });
       }
 
-      let assistantMessage = assistantText;
-      let actions: AdminAiAction[] = [];
-      try {
-        const parsed = JSON.parse(assistantText);
-        const validated = responseSchema.safeParse(parsed);
-        if (validated.success) {
-          assistantMessage = validated.data.assistantMessage;
-          actions = (validated.data.actions || []) as AdminAiAction[];
-        }
-      } catch {
-        // keep raw assistantText
-      }
+      const parsedResponse = parseAiResponse(assistantText);
+      const assistantMessage = parsedResponse.assistantMessage;
+      const actions = parsedResponse.actions;
 
       if (usage) {
         const promptTokens = Number(usage.prompt_tokens || usage.input_tokens || 0);
@@ -407,31 +447,12 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
       }
     }
 
-    let json: unknown;
-    try {
-      json = JSON.parse(content);
-    } catch {
-      return {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assistantMessage: content, actions: [] }),
-      };
-    }
-
-    const validated = responseSchema.safeParse(json);
-    if (!validated.success) {
-      return {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assistantMessage: content, actions: [] }),
-      };
-    }
-
-    const actions = (validated.data.actions || []) as AdminAiAction[];
+    const parsedResponse = parseAiResponse(content);
+    const actions = parsedResponse.actions;
     return {
       status: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ assistantMessage: validated.data.assistantMessage, actions }),
+      body: JSON.stringify({ assistantMessage: parsedResponse.assistantMessage, actions }),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
