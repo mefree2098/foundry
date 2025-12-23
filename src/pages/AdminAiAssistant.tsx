@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import SectionCard from "../components/SectionCard";
 import {
-  aiChat,
+  aiChatStream,
   type AiChatAction,
   type AiChatMessage,
   fetchConfig,
@@ -178,6 +178,7 @@ function AdminAiAssistant() {
   const [personalities, setPersonalities] = useState<Personality[]>(PERSONALITY_PRESETS);
   const [activePersonalityId, setActivePersonalityId] = useState<string>(PERSONALITY_PRESETS[0]?.id || "professional");
   const [personalityDirty, setPersonalityDirty] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
 
   useEffect(() => {
     if (!config) return;
@@ -217,12 +218,6 @@ function AdminAiAssistant() {
       news: news.map((n) => ({ id: n.id, title: n.title, status: n.status, publishDate: n.publishDate })),
     };
   }, [config, platforms, topics, news]);
-
-  const chat = useMutation({
-    mutationFn: (payload: { messages: AiChatMessage[] }) =>
-      aiChat({ messages: payload.messages.slice(-10), context }),
-    onError: (err: unknown) => alert(err instanceof Error ? err.message : "AI request failed"),
-  });
 
   const hasStoredKey = Boolean(config?.ai?.adminAssistant?.openai?.hasApiKey);
 
@@ -362,13 +357,96 @@ function AdminAiAssistant() {
     }
     const userMessage: AiChatMessage = { role: "user", content };
     const nextMessages: AiChatMessage[] = [...messages, userMessage];
-    setMessages(nextMessages);
+    setMessages([...nextMessages, { role: "assistant", content: "" }]);
     setDraft("");
+    setPendingActions([]);
+    setIsStreaming(true);
 
-    const res = await chat.mutateAsync({ messages: nextMessages });
-    const assistantMessage: AiChatMessage = { role: "assistant", content: res.assistantMessage };
-    setMessages((prev) => [...prev, assistantMessage]);
-    setPendingActions((res.actions || []).filter(Boolean));
+    const appendAssistant = (text: string) => {
+      setMessages((prev) => {
+        const next = [...prev];
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          if (next[i].role === "assistant") {
+            next[i] = { ...next[i], content: `${next[i].content || ""}${text}` };
+            return next;
+          }
+        }
+        next.push({ role: "assistant", content: text });
+        return next;
+      });
+    };
+
+    const finalizeAssistant = (assistantMessage: string, actions: AiChatAction[]) => {
+      setMessages((prev) => {
+        const next = [...prev];
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          if (next[i].role === "assistant") {
+            next[i] = { ...next[i], content: assistantMessage };
+            return next;
+          }
+        }
+        next.push({ role: "assistant", content: assistantMessage });
+        return next;
+      });
+      setPendingActions((actions || []).filter(Boolean));
+    };
+
+    try {
+      const res = await aiChatStream({ messages: nextMessages.slice(-10), context });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Request failed: ${res.status}`);
+      }
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("Streaming response unavailable.");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let done = false;
+
+      while (!done) {
+        const { value, done: streamDone } = await reader.read();
+        if (streamDone) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx = buffer.indexOf("\n\n");
+        while (idx !== -1) {
+          const chunk = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const lines = chunk.split("\n");
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const data = trimmed.slice(5).trim();
+            if (!data) continue;
+            let payload: any;
+            try {
+              payload = JSON.parse(data);
+            } catch {
+              continue;
+            }
+            if (payload.type === "delta" && typeof payload.text === "string") {
+              appendAssistant(payload.text);
+              continue;
+            }
+            if (payload.type === "done") {
+              finalizeAssistant(String(payload.assistantMessage || ""), payload.actions || []);
+              done = true;
+              break;
+            }
+            if (payload.type === "error") {
+              throw new Error(payload.message || "Streaming error");
+            }
+          }
+          if (done) break;
+          idx = buffer.indexOf("\n\n");
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "AI request failed";
+      alert(message);
+    } finally {
+      setIsStreaming(false);
+    }
   };
 
   return (
@@ -589,13 +667,13 @@ function AdminAiAssistant() {
               onChange={(e) => setDraft(e.target.value)}
             />
             <div className="flex flex-wrap gap-2">
-              <button type="button" className="btn btn-primary" disabled={chat.isPending} onClick={send}>
-                {chat.isPending ? "Thinking..." : "Send"}
+              <button type="button" className="btn btn-primary" disabled={isStreaming} onClick={send}>
+                {isStreaming ? "Streaming..." : "Send"}
               </button>
-              <button type="button" className="btn btn-secondary" onClick={() => setMessages([])} disabled={chat.isPending}>
+              <button type="button" className="btn btn-secondary" onClick={() => setMessages([])} disabled={isStreaming}>
                 Clear chat
               </button>
-              <button type="button" className="btn btn-secondary" onClick={() => setPendingActions([])} disabled={chat.isPending}>
+              <button type="button" className="btn btn-secondary" onClick={() => setPendingActions([])} disabled={isStreaming}>
                 Clear actions
               </button>
             </div>
@@ -609,7 +687,7 @@ function AdminAiAssistant() {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={apply.isPending || chat.isPending}
+                disabled={apply.isPending || isStreaming}
                 onClick={() => apply.mutate(pendingActions)}
               >
                 {apply.isPending ? "Applying..." : "Apply actions"}

@@ -96,8 +96,165 @@ const responseSchema = z.object({
   actions: z.array(z.any()).optional(),
 });
 
-const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000);
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 120000);
 const OPENAI_MAX_TOKENS = Number(process.env.OPENAI_MAX_TOKENS || 3000);
+
+type StreamEvent =
+  | { type: "delta"; text: string }
+  | { type: "done"; assistantMessage: string; actions: AdminAiAction[] }
+  | { type: "error"; message: string };
+
+async function streamChat(
+  {
+    apiKey,
+    model,
+    messages,
+  }: {
+    apiKey: string;
+    model: string;
+    messages: { role: string; content: string }[];
+  },
+  context: InvocationContext,
+): Promise<HttpResponseInit> {
+  const aborter = new AbortController();
+  const timeout = setTimeout(() => aborter.abort(), OPENAI_TIMEOUT_MS);
+
+  let upstream: Response;
+  try {
+    upstream = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: 0.2,
+        max_completion_tokens: Number.isFinite(OPENAI_MAX_TOKENS) ? OPENAI_MAX_TOKENS : undefined,
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+      signal: aborter.signal,
+    });
+  } catch (err) {
+    clearTimeout(timeout);
+    const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof Error && err.name === "AbortError") {
+      return { status: 504, body: "OpenAI request timed out. Try again or reduce the request size." };
+    }
+    return { status: 502, body: `OpenAI request failed: ${message}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!upstream.ok) {
+    const text = await upstream.text();
+    return { status: 502, body: text || `Upstream error: ${upstream.status}` };
+  }
+
+  if (!upstream.body) {
+    return { status: 502, body: "OpenAI stream unavailable." };
+  }
+
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const reader = upstream.body!.getReader();
+      let buffer = "";
+      let assistantText = "";
+      let usage: any = null;
+      let done = false;
+
+      const send = (payload: StreamEvent) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+      };
+
+      try {
+        while (!done) {
+          const { value, done: streamDone } = await reader.read();
+          if (streamDone) break;
+          buffer += decoder.decode(value, { stream: true });
+          let idx = buffer.indexOf("\n\n");
+          while (idx !== -1) {
+            const chunk = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const lines = chunk.split("\n");
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith("data:")) continue;
+              const data = trimmed.slice(5).trim();
+              if (!data) continue;
+              if (data === "[DONE]") {
+                done = true;
+                break;
+              }
+              let parsed: any;
+              try {
+                parsed = JSON.parse(data);
+              } catch {
+                continue;
+              }
+              if (parsed?.usage) usage = parsed.usage;
+              const delta = parsed?.choices?.[0]?.delta;
+              const text = delta?.content;
+              if (text) {
+                assistantText += text;
+                send({ type: "delta", text });
+              }
+            }
+            if (done) break;
+            idx = buffer.indexOf("\n\n");
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        send({ type: "error", message });
+      }
+
+      let assistantMessage = assistantText;
+      let actions: AdminAiAction[] = [];
+      try {
+        const parsed = JSON.parse(assistantText);
+        const validated = responseSchema.safeParse(parsed);
+        if (validated.success) {
+          assistantMessage = validated.data.assistantMessage;
+          actions = (validated.data.actions || []) as AdminAiAction[];
+        }
+      } catch {
+        // keep raw assistantText
+      }
+
+      if (usage) {
+        const promptTokens = Number(usage.prompt_tokens || usage.input_tokens || 0);
+        const completionTokens = Number(usage.completion_tokens || usage.output_tokens || 0);
+        const totalTokens = Number(usage.total_tokens || 0) || promptTokens + completionTokens;
+        if (totalTokens > 0 && model) {
+          try {
+            await recordChatUsage(model, { promptTokens, completionTokens, totalTokens });
+          } catch (err) {
+            context.log(`Failed to record AI usage: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      }
+
+      send({ type: "done", assistantMessage, actions });
+      controller.close();
+    },
+  });
+
+  return {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+    body: stream as any,
+  };
+}
 
 async function aiChat(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   try {
@@ -189,6 +346,11 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
       { role: "system", content: systemPrompt },
       ...messages.map((m) => ({ role: m.role, content: m.content })),
     ];
+
+    const wantsStream = req.query.get("stream") === "1";
+    if (wantsStream) {
+      return streamChat({ apiKey: finalApiKey, model: finalModel, messages: openAiMessages }, context);
+    }
 
     let upstream: Response;
     const controller = new AbortController();

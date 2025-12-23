@@ -199,3 +199,15 @@ export const aiChat = (payload: {
   messages: AiChatMessage[];
   context?: unknown;
 }) => sendJson<AiChatResponse>("/ai/chat", "POST", payload);
+
+export const aiChatStream = (payload: {
+  apiKey?: string;
+  model?: string;
+  messages: AiChatMessage[];
+  context?: unknown;
+}) =>
+  fetch(`${base}/ai/chat?stream=1`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
