@@ -204,7 +204,7 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
           model: finalModel,
           messages: openAiMessages,
           temperature: 0.2,
-          max_tokens: Number.isFinite(OPENAI_MAX_TOKENS) ? OPENAI_MAX_TOKENS : undefined,
+          max_completion_tokens: Number.isFinite(OPENAI_MAX_TOKENS) ? OPENAI_MAX_TOKENS : undefined,
         }),
         signal: controller.signal,
       });
