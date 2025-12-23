@@ -18,6 +18,7 @@ import {
   deletePlatform,
   deleteTopic,
 } from "../lib/api";
+import type { SiteConfig } from "../lib/types";
 
 type Personality = { id: string; name: string; prompt: string };
 
@@ -78,6 +79,29 @@ function safeJson(value: unknown) {
   } catch {
     return String(value);
   }
+}
+
+function truncateText(value?: string, maxLength = 2000) {
+  const text = (value || "").trim();
+  if (!text) return undefined;
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}\n/* ... truncated ... */`;
+}
+
+function summarizeConfigForAi(config?: SiteConfig) {
+  if (!config) return config;
+  const pages = (config.pages || []).map((page) => ({
+    id: page.id,
+    title: page.title,
+    enabled: page.enabled,
+    description: page.description,
+    height: page.height,
+    externalScripts: page.externalScripts,
+    html: truncateText(page.html),
+    css: truncateText(page.css),
+    script: truncateText(page.script),
+  }));
+  return { ...config, pages };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -185,8 +209,9 @@ function AdminAiAssistant() {
   }, [config]);
 
   const context = useMemo(() => {
+    const configSummary = summarizeConfigForAi(config);
     return {
-      config,
+      config: configSummary,
       platforms: platforms.map((p) => ({ id: p.id, name: p.name })),
       topics: topics.map((t) => ({ id: t.id, name: t.name })),
       news: news.map((n) => ({ id: n.id, title: n.title, status: n.status, publishDate: n.publishDate })),
