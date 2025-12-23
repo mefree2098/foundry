@@ -12,14 +12,15 @@ const INTERNAL_TRAINING = `You are the Foundry admin assistant.
 Primary goal: help the admin safely edit the site by proposing concrete actions the platform can apply.
 
 Response rules (critical):
-- Output MUST be strict JSON only: { "assistantMessage": string, "actions": ActionEnvelope[] }.
+- If the apply_admin_actions tool is available, you MUST call it and not respond with normal text.
+- If tools are not available, output strict JSON only: { "assistantMessage": string, "actions": ActionEnvelope[] }.
 - Prefer actions over explanations. If an action is possible, propose it.
 - If the request is ambiguous, ask a clarifying question and return an empty actions array.
 - Never include secrets (API keys, tokens) in assistantMessage or actions.
 - assistantMessage must be brief (<= 240 chars) and must not include code blocks, HTML, JSON, or full configuration payloads.
 - Do not wrap the JSON response inside assistantMessage or stringify actions. Actions must be real JSON arrays.
 
-Action envelope format:
+Action envelope format (tool args or JSON response):
 - Each action item MUST include keys: type, id, value (all strings).
 - For delete actions (platform.delete/topic.delete/news.delete): set id to the target id and value to "".
 - For all other actions: set id to "" and value to a JSON string payload for that action (example value: {"nav":{"links":[...]}}).
@@ -105,6 +106,7 @@ const responseSchema = z.object({
 
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 120000);
 const OPENAI_MAX_TOKENS = Number(process.env.OPENAI_MAX_TOKENS || 3000);
+const APPLY_ACTIONS_TOOL_NAME = "apply_admin_actions";
 
 type StreamEvent =
   | { type: "delta"; text: string }
@@ -497,10 +499,11 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
 
     const systemPrompt = [
       "You are an admin assistant for a website CMS.",
-      "You must respond in strict JSON only, matching this schema:",
+      "If the apply_admin_actions tool is available, you must call it. If tools are not available, respond with JSON only.",
+      "Schema (tool args or JSON response):",
       '{ "assistantMessage": string, "actions": { type: string, id: string, value: string }[] }',
       "",
-      "Action envelope rules:",
+      "Action envelope rules (tool args or JSON response):",
       '- Every action item must include type, id, value (all strings).',
       '- For delete actions, set id to the target id and value to "".',
       "- For all other actions, set id to \"\" and value to a JSON string payload for that action.",
@@ -566,13 +569,20 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
           messages: openAiMessages,
           temperature: 0.2,
           max_completion_tokens: Number.isFinite(OPENAI_MAX_TOKENS) ? OPENAI_MAX_TOKENS : undefined,
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "admin_ai_response",
-              strict: true,
-              schema: ACTION_ENVELOPE_SCHEMA,
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: APPLY_ACTIONS_TOOL_NAME,
+                description: "Return assistantMessage and actions for the admin UI to apply.",
+                parameters: ACTION_ENVELOPE_SCHEMA,
+                strict: true,
+              },
             },
+          ],
+          tool_choice: {
+            type: "function",
+            function: { name: APPLY_ACTIONS_TOOL_NAME },
           },
         }),
         signal: controller.signal,
@@ -596,8 +606,25 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
     }
 
     const data = (await upstream.json()) as any;
-    const content = String(data?.choices?.[0]?.message?.content || "").trim();
-    if (!content) return { status: 502, body: "OpenAI returned an empty response." };
+    const message = data?.choices?.[0]?.message || {};
+    const toolArgs = message?.tool_calls?.[0]?.function?.arguments;
+    if (toolArgs) {
+      const parsedResponse = parseAiResponse(String(toolArgs));
+      const actions = parsedResponse.actions;
+      return {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assistantMessage: parsedResponse.assistantMessage, actions }),
+      };
+    }
+
+    const content = String(message?.content || "").trim();
+    if (!content) {
+      const refusal = typeof message?.refusal === "string" ? message.refusal : "";
+      const finishReason = String(data?.choices?.[0]?.finish_reason || "").trim();
+      const details = refusal || `OpenAI returned an empty response. finish_reason=${finishReason || "unknown"}.`;
+      return { status: 502, body: details };
+    }
 
     const usage = data?.usage || {};
     const promptTokens = Number(usage.prompt_tokens || usage.input_tokens || 0);
