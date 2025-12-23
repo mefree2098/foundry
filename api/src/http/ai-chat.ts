@@ -16,7 +16,8 @@ Response rules (critical):
 - Prefer actions over explanations. If an action is possible, propose it.
 - If the request is ambiguous, ask a clarifying question and return an empty actions array.
 - Never include secrets (API keys, tokens) in assistantMessage or actions.
-- assistantMessage must be brief and must not include code blocks or full configuration payloads.
+- assistantMessage must be brief (<= 240 chars) and must not include code blocks, HTML, JSON, or full configuration payloads.
+- Do not wrap the JSON response inside assistantMessage or stringify actions. Actions must be real JSON arrays.
 
 Action rules:
 - Use "config.merge" for site configuration changes (themes, nav, homepage sections, custom field schemas).
@@ -158,6 +159,18 @@ function parseAiResponse(raw: string): { assistantMessage: string; actions: Admi
     return null;
   };
 
+  const extractActions = (value: unknown): AdminAiAction[] => {
+    if (Array.isArray(value)) return value as AdminAiAction[];
+    if (typeof value === "string") {
+      const parsed = attemptParse(value) || findJsonObject(value);
+      if (Array.isArray(parsed)) return parsed as AdminAiAction[];
+      if (parsed && typeof parsed === "object" && Array.isArray((parsed as any).actions)) {
+        return (parsed as any).actions as AdminAiAction[];
+      }
+    }
+    return [];
+  };
+
   let parsed: any = attemptParse(trimmed);
 
   if (!parsed && trimmed.startsWith("```")) {
@@ -173,14 +186,29 @@ function parseAiResponse(raw: string): { assistantMessage: string; actions: Admi
   if (parsed) {
     const validated = responseSchema.safeParse(parsed);
     if (validated.success) {
+      const actions = extractActions(validated.data.actions);
       return {
         assistantMessage: validated.data.assistantMessage || "",
-        actions: (validated.data.actions || []) as AdminAiAction[],
+        actions,
       };
     }
     if (typeof parsed === "object") {
-      const actions = Array.isArray(parsed.actions) ? (parsed.actions as AdminAiAction[]) : [];
+      const actions = extractActions(parsed.actions);
       const assistantMessage = typeof parsed.assistantMessage === "string" ? parsed.assistantMessage : "";
+      if (!actions.length && assistantMessage) {
+        const embedded = findJsonObject(assistantMessage);
+        if (embedded && typeof embedded === "object") {
+          const embeddedActions = extractActions((embedded as any).actions ?? embedded);
+          if (embeddedActions.length) {
+            const embeddedMessage =
+              typeof (embedded as any).assistantMessage === "string" ? (embedded as any).assistantMessage : "";
+            return {
+              assistantMessage: embeddedMessage || assistantMessage || "Proposed actions ready.",
+              actions: embeddedActions,
+            };
+          }
+        }
+      }
       if (assistantMessage || actions.length) {
         return { assistantMessage, actions };
       }
