@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import SectionCard from "../components/SectionCard";
 import {
-  aiChatStream,
+  aiChat,
   type AiChatAction,
   type AiChatMessage,
   fetchConfig,
@@ -357,7 +357,7 @@ function AdminAiAssistant() {
     }
     const userMessage: AiChatMessage = { role: "user", content };
     const nextMessages: AiChatMessage[] = [...messages, userMessage];
-    setMessages([...nextMessages, { role: "assistant", content: "Streaming response..." }]);
+    setMessages([...nextMessages, { role: "assistant", content: "Working on it..." }]);
     setDraft("");
     setPendingActions([]);
     setIsStreaming(true);
@@ -378,52 +378,8 @@ function AdminAiAssistant() {
     };
 
     try {
-      const res = await aiChatStream({ messages: nextMessages.slice(-10), context });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `Request failed: ${res.status}`);
-      }
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("Streaming response unavailable.");
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let done = false;
-
-      while (!done) {
-        const { value, done: streamDone } = await reader.read();
-        if (streamDone) break;
-        buffer += decoder.decode(value, { stream: true });
-        let idx = buffer.indexOf("\n\n");
-        while (idx !== -1) {
-          const chunk = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-          const lines = chunk.split("\n");
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith("data:")) continue;
-            const data = trimmed.slice(5).trim();
-            if (!data) continue;
-            let payload: any;
-            try {
-              payload = JSON.parse(data);
-            } catch {
-              continue;
-            }
-            if (payload.type === "delta") continue;
-            if (payload.type === "done") {
-              finalizeAssistant(String(payload.assistantMessage || ""), payload.actions || []);
-              done = true;
-              break;
-            }
-            if (payload.type === "error") {
-              throw new Error(payload.message || "Streaming error");
-            }
-          }
-          if (done) break;
-          idx = buffer.indexOf("\n\n");
-        }
-      }
+      const res = await aiChat({ messages: nextMessages.slice(-10), context });
+      finalizeAssistant(String(res.assistantMessage || ""), res.actions || []);
     } catch (err) {
       const message = err instanceof Error ? err.message : "AI request failed";
       alert(message);

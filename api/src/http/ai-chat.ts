@@ -12,12 +12,17 @@ const INTERNAL_TRAINING = `You are the Foundry admin assistant.
 Primary goal: help the admin safely edit the site by proposing concrete actions the platform can apply.
 
 Response rules (critical):
-- Output MUST be strict JSON only: { "assistantMessage": string, "actions": AdminAiAction[] }.
+- Output MUST be strict JSON only: { "assistantMessage": string, "actions": ActionEnvelope[] }.
 - Prefer actions over explanations. If an action is possible, propose it.
 - If the request is ambiguous, ask a clarifying question and return an empty actions array.
 - Never include secrets (API keys, tokens) in assistantMessage or actions.
 - assistantMessage must be brief (<= 240 chars) and must not include code blocks, HTML, JSON, or full configuration payloads.
 - Do not wrap the JSON response inside assistantMessage or stringify actions. Actions must be real JSON arrays.
+
+Action envelope format:
+- Each action item MUST include keys: type, id, value (all strings).
+- For delete actions (platform.delete/topic.delete/news.delete): set id to the target id and value to "".
+- For all other actions: set id to "" and value to a JSON string payload for that action (example value: {"nav":{"links":[...]}}).
 
 Action rules:
 - Use "config.merge" for site configuration changes (themes, nav, homepage sections, custom field schemas).
@@ -106,6 +111,75 @@ type StreamEvent =
   | { type: "done"; assistantMessage: string; actions: AdminAiAction[] }
   | { type: "error"; message: string };
 
+const ACTION_ENVELOPE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    assistantMessage: { type: "string" },
+    actions: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          type: { type: "string" },
+          id: { type: "string" },
+          value: { type: "string" },
+        },
+        required: ["type", "id", "value"],
+      },
+    },
+  },
+  required: ["assistantMessage", "actions"],
+};
+
+function parseActionValue(raw: string) {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed === "string") {
+      const inner = parsed.trim();
+      if ((inner.startsWith("{") && inner.endsWith("}")) || (inner.startsWith("[") && inner.endsWith("]"))) {
+        try {
+          return JSON.parse(inner);
+        } catch {
+          return parsed;
+        }
+      }
+    }
+    return parsed;
+  } catch {
+    return raw;
+  }
+}
+
+function normalizeActions(input: unknown): AdminAiAction[] {
+  if (!Array.isArray(input)) return [];
+  const normalized: AdminAiAction[] = [];
+  for (const item of input) {
+    if (!item || typeof item !== "object") continue;
+    const raw = item as any;
+    const type = typeof raw.type === "string" ? raw.type.trim() : "";
+    if (!type) continue;
+    if (type.endsWith(".delete")) {
+      const id = typeof raw.id === "string" ? raw.id.trim() : "";
+      if (id) normalized.push({ type, id } as AdminAiAction);
+      continue;
+    }
+    if (raw.value && typeof raw.value === "object") {
+      normalized.push({ type, value: raw.value } as AdminAiAction);
+      continue;
+    }
+    const valueText = typeof raw.value === "string" ? raw.value.trim() : "";
+    const parsedValue = valueText ? parseActionValue(valueText) : undefined;
+    if (parsedValue !== undefined) {
+      normalized.push({ type, value: parsedValue } as AdminAiAction);
+    }
+  }
+  return normalized;
+}
+
 function parseAiResponse(raw: string): { assistantMessage: string; actions: AdminAiAction[] } {
   const trimmed = (raw || "").trim();
   if (!trimmed) return { assistantMessage: "", actions: [] };
@@ -186,19 +260,19 @@ function parseAiResponse(raw: string): { assistantMessage: string; actions: Admi
   if (parsed) {
     const validated = responseSchema.safeParse(parsed);
     if (validated.success) {
-      const actions = extractActions(validated.data.actions);
+      const actions = normalizeActions(extractActions(validated.data.actions));
       return {
         assistantMessage: validated.data.assistantMessage || "",
         actions,
       };
     }
     if (typeof parsed === "object") {
-      const actions = extractActions(parsed.actions);
+      const actions = normalizeActions(extractActions(parsed.actions));
       const assistantMessage = typeof parsed.assistantMessage === "string" ? parsed.assistantMessage : "";
       if (!actions.length && assistantMessage) {
         const embedded = findJsonObject(assistantMessage);
         if (embedded && typeof embedded === "object") {
-          const embeddedActions = extractActions((embedded as any).actions ?? embedded);
+          const embeddedActions = normalizeActions(extractActions((embedded as any).actions ?? embedded));
           if (embeddedActions.length) {
             const embeddedMessage =
               typeof (embedded as any).assistantMessage === "string" ? (embedded as any).assistantMessage : "";
@@ -218,7 +292,7 @@ function parseAiResponse(raw: string): { assistantMessage: string; actions: Admi
   // Last resort: if assistantMessage contains JSON, attempt to extract actions from it.
   const embedded = findJsonObject(trimmed);
   if (embedded && typeof embedded === "object") {
-    const actions = Array.isArray(embedded.actions) ? (embedded.actions as AdminAiAction[]) : [];
+    const actions = normalizeActions(Array.isArray((embedded as any).actions) ? (embedded as any).actions : []);
     if (actions.length) {
       return { assistantMessage: "Proposed actions ready.", actions };
     }
@@ -256,7 +330,14 @@ async function streamChat(
         messages,
         temperature: 0.2,
         max_completion_tokens: Number.isFinite(OPENAI_MAX_TOKENS) ? OPENAI_MAX_TOKENS : undefined,
-        response_format: { type: "json_object" },
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "admin_ai_response",
+            strict: true,
+            schema: ACTION_ENVELOPE_SCHEMA,
+          },
+        },
         stream: true,
         stream_options: { include_usage: true },
       }),
@@ -417,17 +498,19 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
     const systemPrompt = [
       "You are an admin assistant for a website CMS.",
       "You must respond in strict JSON only, matching this schema:",
-      '{ "assistantMessage": string, "actions": AdminAiAction[] }',
+      '{ "assistantMessage": string, "actions": { type: string, id: string, value: string }[] }',
       "",
-      "AdminAiAction types:",
-      '- { "type": "config.merge", "value": Partial<SiteConfig> }',
-      '- { "type": "platform.upsert", "value": Platform }',
-      '- { "type": "topic.upsert", "value": Topic }',
-      '- { "type": "news.upsert", "value": NewsPost }',
-      '- { "type": "platform.delete", "id": string }',
-      '- { "type": "topic.delete", "id": string }',
-      '- { "type": "news.delete", "id": string }',
-      '- { "type": "media.generate", "value": { prompt, targetType, targetId?, field, size?, quality?, background? } }',
+      "Action envelope rules:",
+      '- Every action item must include type, id, value (all strings).',
+      '- For delete actions, set id to the target id and value to "".',
+      "- For all other actions, set id to \"\" and value to a JSON string payload for that action.",
+      "",
+      "Action payloads (value JSON string) follow these shapes:",
+      '- config.merge => Partial<SiteConfig>',
+      '- platform.upsert => Platform',
+      '- topic.upsert => Topic',
+      '- news.upsert => NewsPost',
+      '- media.generate => { prompt, targetType, targetId?, field, size?, quality?, background? }',
       "",
       "Rules:",
       "- Keep actions minimal and safe.",
@@ -483,7 +566,14 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
           messages: openAiMessages,
           temperature: 0.2,
           max_completion_tokens: Number.isFinite(OPENAI_MAX_TOKENS) ? OPENAI_MAX_TOKENS : undefined,
-          response_format: { type: "json_object" },
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "admin_ai_response",
+              strict: true,
+              schema: ACTION_ENVELOPE_SCHEMA,
+            },
+          },
         }),
         signal: controller.signal,
       });
