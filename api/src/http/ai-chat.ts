@@ -41,6 +41,7 @@ Platform map:
   - config.pages[] items are { id, title, enabled?, description?, html?, css?, script?, externalScripts?, height? }.
   - Pages render at /<id> and /pages/<id>. Include a nav link to "/<id>" when adding a tab.
   - Custom page code runs inside a sandboxed iframe; include full HTML/CSS/JS content in the fields.
+  - Keep code concise; prefer external scripts (CDN) for larger demos to reduce payload size.
 - Extra fields:
   - Field definitions live in config.content.schemas.{platforms|news|topics}[].
   - Values are stored on items under item.custom.<fieldId>.
@@ -94,6 +95,9 @@ const responseSchema = z.object({
   assistantMessage: z.string(),
   actions: z.array(z.any()).optional(),
 });
+
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 25000);
+const OPENAI_MAX_TOKENS = Number(process.env.OPENAI_MAX_TOKENS || 3000);
 
 async function aiChat(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   try {
@@ -187,6 +191,8 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
     ];
 
     let upstream: Response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
     try {
       upstream = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -198,12 +204,20 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
           model: finalModel,
           messages: openAiMessages,
           temperature: 0.2,
+          max_tokens: Number.isFinite(OPENAI_MAX_TOKENS) ? OPENAI_MAX_TOKENS : undefined,
         }),
+        signal: controller.signal,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof Error && err.name === "AbortError") {
+        context.log("OpenAI request timed out.");
+        return { status: 504, body: "OpenAI request timed out. Try again or reduce the request size." };
+      }
       context.log(`OpenAI request failed: ${message}`);
       return { status: 502, body: `OpenAI request failed: ${message}` };
+    } finally {
+      clearTimeout(timeout);
     }
 
     if (!upstream.ok) {

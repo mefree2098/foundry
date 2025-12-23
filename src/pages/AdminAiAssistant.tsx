@@ -220,7 +220,7 @@ function AdminAiAssistant() {
 
   const chat = useMutation({
     mutationFn: (payload: { messages: AiChatMessage[] }) =>
-      aiChat({ messages: payload.messages, context }),
+      aiChat({ messages: payload.messages.slice(-10), context }),
     onError: (err: unknown) => alert(err instanceof Error ? err.message : "AI request failed"),
   });
 
