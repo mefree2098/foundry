@@ -37,6 +37,10 @@ Platform map:
 - Contact settings:
   - config.contact has { enabled, recipientEmail, subjectTemplate, successMessage }.
   - The contact section only renders when config.contact.enabled is true.
+- Custom pages:
+  - config.pages[] items are { id, title, enabled?, description?, html?, css?, script?, externalScripts?, height? }.
+  - Pages render at /<id> and /pages/<id>. Include a nav link to "/<id>" when adding a tab.
+  - Custom page code runs inside a sandboxed iframe; include full HTML/CSS/JS content in the fields.
 - Extra fields:
   - Field definitions live in config.content.schemas.{platforms|news|topics}[].
   - Values are stored on items under item.custom.<fieldId>.
