@@ -357,24 +357,10 @@ function AdminAiAssistant() {
     }
     const userMessage: AiChatMessage = { role: "user", content };
     const nextMessages: AiChatMessage[] = [...messages, userMessage];
-    setMessages([...nextMessages, { role: "assistant", content: "" }]);
+    setMessages([...nextMessages, { role: "assistant", content: "Streaming response..." }]);
     setDraft("");
     setPendingActions([]);
     setIsStreaming(true);
-
-    const appendAssistant = (text: string) => {
-      setMessages((prev) => {
-        const next = [...prev];
-        for (let i = next.length - 1; i >= 0; i -= 1) {
-          if (next[i].role === "assistant") {
-            next[i] = { ...next[i], content: `${next[i].content || ""}${text}` };
-            return next;
-          }
-        }
-        next.push({ role: "assistant", content: text });
-        return next;
-      });
-    };
 
     const finalizeAssistant = (assistantMessage: string, actions: AiChatAction[]) => {
       setMessages((prev) => {
@@ -424,10 +410,7 @@ function AdminAiAssistant() {
             } catch {
               continue;
             }
-            if (payload.type === "delta" && typeof payload.text === "string") {
-              appendAssistant(payload.text);
-              continue;
-            }
+            if (payload.type === "delta") continue;
             if (payload.type === "done") {
               finalizeAssistant(String(payload.assistantMessage || ""), payload.actions || []);
               done = true;
