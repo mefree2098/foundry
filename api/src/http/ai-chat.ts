@@ -238,7 +238,7 @@ async function streamChat(
               additionalProperties: false,
               properties: {
                 assistantMessage: { type: "string", maxLength: 240 },
-                actions: { type: "array", items: {} },
+                actions: { type: "array", items: { type: "object", additionalProperties: true } },
               },
               required: ["assistantMessage", "actions"],
             },
@@ -480,7 +480,7 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
                 additionalProperties: false,
                 properties: {
                   assistantMessage: { type: "string", maxLength: 240 },
-                  actions: { type: "array", items: {} },
+                  actions: { type: "array", items: { type: "object", additionalProperties: true } },
                 },
                 required: ["assistantMessage", "actions"],
               },
