@@ -228,22 +228,7 @@ async function streamChat(
         messages,
         temperature: 0.2,
         max_completion_tokens: Number.isFinite(OPENAI_MAX_TOKENS) ? OPENAI_MAX_TOKENS : undefined,
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "admin_ai_response",
-            strict: true,
-            schema: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                assistantMessage: { type: "string", maxLength: 240 },
-                actions: { type: "array", items: { type: "object", additionalProperties: false } },
-              },
-              required: ["assistantMessage", "actions"],
-            },
-          },
-        },
+        response_format: { type: "json_object" },
         stream: true,
         stream_options: { include_usage: true },
       }),
@@ -470,22 +455,7 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
           messages: openAiMessages,
           temperature: 0.2,
           max_completion_tokens: Number.isFinite(OPENAI_MAX_TOKENS) ? OPENAI_MAX_TOKENS : undefined,
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "admin_ai_response",
-              strict: true,
-              schema: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  assistantMessage: { type: "string", maxLength: 240 },
-                  actions: { type: "array", items: { type: "object", additionalProperties: false } },
-                },
-                required: ["assistantMessage", "actions"],
-              },
-            },
-          },
+          response_format: { type: "json_object" },
         }),
         signal: controller.signal,
       });
