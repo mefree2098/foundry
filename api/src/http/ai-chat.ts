@@ -117,40 +117,87 @@ function parseAiResponse(raw: string): { assistantMessage: string; actions: Admi
     }
   };
 
+  const findJsonObject = (text: string) => {
+    let depth = 0;
+    let start = -1;
+    let inString = false;
+    let escape = false;
+    for (let i = 0; i < text.length; i += 1) {
+      const char = text[i];
+      if (inString) {
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (char === "\\") {
+          escape = true;
+          continue;
+        }
+        if (char === "\"") inString = false;
+        continue;
+      }
+      if (char === "\"") {
+        inString = true;
+        continue;
+      }
+      if (char === "{") {
+        if (depth === 0) start = i;
+        depth += 1;
+        continue;
+      }
+      if (char === "}") {
+        depth -= 1;
+        if (depth === 0 && start !== -1) {
+          const candidate = text.slice(start, i + 1);
+          const parsed = attemptParse(candidate);
+          if (parsed) return parsed;
+          start = -1;
+        }
+      }
+    }
+    return null;
+  };
+
   let parsed: any = attemptParse(trimmed);
 
   if (!parsed && trimmed.startsWith("```")) {
     const fenceEnd = trimmed.lastIndexOf("```");
     if (fenceEnd > 3) {
       const inner = trimmed.slice(trimmed.indexOf("\n") + 1, fenceEnd).trim();
-      parsed = attemptParse(inner);
+      parsed = attemptParse(inner) || findJsonObject(inner);
     }
   }
 
-  if (!parsed) {
-    const start = trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("}");
-    if (start !== -1 && end !== -1 && end > start) {
-      parsed = attemptParse(trimmed.slice(start, end + 1));
+  if (!parsed) parsed = findJsonObject(trimmed);
+
+  if (parsed) {
+    const validated = responseSchema.safeParse(parsed);
+    if (validated.success) {
+      return {
+        assistantMessage: validated.data.assistantMessage || "",
+        actions: (validated.data.actions || []) as AdminAiAction[],
+      };
+    }
+    if (typeof parsed === "object") {
+      const actions = Array.isArray(parsed.actions) ? (parsed.actions as AdminAiAction[]) : [];
+      const assistantMessage = typeof parsed.assistantMessage === "string" ? parsed.assistantMessage : "";
+      if (assistantMessage || actions.length) {
+        return { assistantMessage, actions };
+      }
     }
   }
 
-  const validated = parsed ? responseSchema.safeParse(parsed) : null;
-  if (validated?.success) {
-    return {
-      assistantMessage: validated.data.assistantMessage || "",
-      actions: (validated.data.actions || []) as AdminAiAction[],
-    };
+  // Last resort: if assistantMessage contains JSON, attempt to extract actions from it.
+  const embedded = findJsonObject(trimmed);
+  if (embedded && typeof embedded === "object") {
+    const actions = Array.isArray(embedded.actions) ? (embedded.actions as AdminAiAction[]) : [];
+    if (actions.length) {
+      return { assistantMessage: "Proposed actions ready.", actions };
+    }
   }
 
-  if (parsed && typeof parsed === "object" && parsed.assistantMessage && Array.isArray(parsed.actions)) {
-    return {
-      assistantMessage: String(parsed.assistantMessage || ""),
-      actions: parsed.actions as AdminAiAction[],
-    };
-  }
-
-  return { assistantMessage: trimmed, actions: [] };
+  const sanitized = trimmed.length > 400 ? `${trimmed.slice(0, 400)}…` : trimmed;
+  return { assistantMessage: sanitized, actions: [] };
 }
 
 async function streamChat(
@@ -181,7 +228,22 @@ async function streamChat(
         messages,
         temperature: 0.2,
         max_completion_tokens: Number.isFinite(OPENAI_MAX_TOKENS) ? OPENAI_MAX_TOKENS : undefined,
-        response_format: { type: "json_object" },
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "admin_ai_response",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                assistantMessage: { type: "string", maxLength: 240 },
+                actions: { type: "array", items: {} },
+              },
+              required: ["assistantMessage", "actions"],
+            },
+          },
+        },
         stream: true,
         stream_options: { include_usage: true },
       }),
@@ -408,7 +470,22 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
           messages: openAiMessages,
           temperature: 0.2,
           max_completion_tokens: Number.isFinite(OPENAI_MAX_TOKENS) ? OPENAI_MAX_TOKENS : undefined,
-          response_format: { type: "json_object" },
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "admin_ai_response",
+              strict: true,
+              schema: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  assistantMessage: { type: "string", maxLength: 240 },
+                  actions: { type: "array", items: {} },
+                },
+                required: ["assistantMessage", "actions"],
+              },
+            },
+          },
         }),
         signal: controller.signal,
       });
