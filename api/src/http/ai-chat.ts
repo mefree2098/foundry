@@ -49,7 +49,7 @@ Platform map:
   - config.pages[] items are { id, title, enabled?, description?, html?, css?, script?, externalScripts?, height? }.
   - Pages render at /<id> and /pages/<id>. Include a nav link to "/<id>" when adding a tab.
   - Custom page code runs inside a sandboxed iframe; include full HTML/CSS/JS content in the fields.
-  - Keep code concise; prefer external scripts (CDN) for larger demos to reduce payload size.
+  - Keep code concise and compact (no comments, minimal whitespace); prefer external scripts (CDN) for larger demos to reduce payload size.
 - Extra fields:
   - Field definitions live in config.content.schemas.{platforms|news|topics}[].
   - Values are stored on items under item.custom.<fieldId>.
@@ -105,7 +105,7 @@ const responseSchema = z.object({
 });
 
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 120000);
-const OPENAI_MAX_TOKENS = Number(process.env.OPENAI_MAX_TOKENS || 3000);
+const OPENAI_MAX_TOKENS = Number(process.env.OPENAI_MAX_TOKENS || 128000);
 const APPLY_ACTIONS_TOOL_NAME = "apply_admin_actions";
 
 type StreamEvent =
