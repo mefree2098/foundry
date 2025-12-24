@@ -304,6 +304,14 @@ function parseAiResponse(raw: string): { assistantMessage: string; actions: Admi
   return { assistantMessage: sanitized, actions: [] };
 }
 
+function aiErrorResponse(message: string): HttpResponseInit {
+  return {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ assistantMessage: message, actions: [] }),
+  };
+}
+
 async function streamChat(
   {
     apiKey,
@@ -494,7 +502,7 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
     const finalApiKey = (apiKey || storedOpenAiKey || "").trim();
     const finalModel = (model || storedOpenAiModel || "gpt-4o-mini").trim();
     if (!finalApiKey) {
-      return { status: 400, body: "OpenAI API key not configured. Save it under Admin > AI assistant settings." };
+      return aiErrorResponse("OpenAI API key not configured. Save it under Admin > AI assistant settings.");
     }
 
     const systemPrompt = [
@@ -591,10 +599,10 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
       const message = err instanceof Error ? err.message : String(err);
       if (err instanceof Error && err.name === "AbortError") {
         context.log("OpenAI request timed out.");
-        return { status: 504, body: "OpenAI request timed out. Try again or reduce the request size." };
+        return aiErrorResponse("OpenAI request timed out. Try again or reduce the request size.");
       }
       context.log(`OpenAI request failed: ${message}`);
-      return { status: 502, body: `OpenAI request failed: ${message}` };
+      return aiErrorResponse(`OpenAI request failed: ${message}`);
     } finally {
       clearTimeout(timeout);
     }
@@ -602,15 +610,19 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
     if (!upstream.ok) {
       const text = await upstream.text();
       context.log(`OpenAI upstream error: ${upstream.status}`);
-      return { status: 502, body: text || `Upstream error: ${upstream.status}` };
+      return aiErrorResponse(text || `OpenAI upstream error: ${upstream.status}`);
     }
 
     const data = (await upstream.json()) as any;
     const message = data?.choices?.[0]?.message || {};
+    const finishReason = String(data?.choices?.[0]?.finish_reason || "").trim();
     const toolArgs = message?.tool_calls?.[0]?.function?.arguments;
     if (toolArgs) {
       const parsedResponse = parseAiResponse(String(toolArgs));
       const actions = parsedResponse.actions;
+      if (!parsedResponse.assistantMessage && !actions.length && finishReason === "length") {
+        return aiErrorResponse("OpenAI response was truncated (finish_reason=length). Try again or reduce output size.");
+      }
       return {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -621,9 +633,8 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
     const content = String(message?.content || "").trim();
     if (!content) {
       const refusal = typeof message?.refusal === "string" ? message.refusal : "";
-      const finishReason = String(data?.choices?.[0]?.finish_reason || "").trim();
       const details = refusal || `OpenAI returned an empty response. finish_reason=${finishReason || "unknown"}.`;
-      return { status: 502, body: details };
+      return aiErrorResponse(details);
     }
 
     const usage = data?.usage || {};
