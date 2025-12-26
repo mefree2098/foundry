@@ -106,6 +106,15 @@ resource "azurerm_cosmosdb_sql_container" "subscribers" {
   partition_key_version = 2
 }
 
+resource "azurerm_cosmosdb_sql_container" "contact_submissions" {
+  name                  = "contact-submissions"
+  resource_group_name   = azurerm_resource_group.rg.name
+  account_name          = azurerm_cosmosdb_account.cosmos.name
+  database_name         = azurerm_cosmosdb_sql_database.db.name
+  partition_key_paths   = ["/id"]
+  partition_key_version = 2
+}
+
 resource "azurerm_storage_account" "media" {
   name                          = substr("${lower(replace(var.prefix, "/[^a-z0-9]/", ""))}stor", 0, 24)
   resource_group_name           = azurerm_resource_group.rg.name

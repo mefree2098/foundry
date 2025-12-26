@@ -5,6 +5,7 @@ import AiProviders from "../components/AiProviders";
 import NewsletterCTA from "../components/NewsletterCTA";
 import SectionCard from "../components/SectionCard";
 import { EmbedBlock } from "../components/EmbedBlock";
+import { ContactForm } from "../components/ContactForm";
 import { fetchConfig, fetchNews, fetchPlatforms, fetchTopics } from "../lib/api";
 import { KeyRound, ShieldCheck, Shuffle } from "lucide-react";
 
@@ -24,6 +25,7 @@ const defaultSections = [
   { id: "news", type: "news", enabled: true, maxItems: 6, title: "Latest news" },
   { id: "topics", type: "topics", enabled: true, maxItems: 6, title: "Explore by topic" },
   { id: "newsletter", type: "newsletter", enabled: true },
+  { id: "contact", type: "contact", enabled: false, title: "Contact us" },
 ] as const;
 
 function Home() {
@@ -291,6 +293,17 @@ function Home() {
               {embedBlock}
               <NewsletterCTA />
             </div>
+          );
+        }
+
+        if (type === "contact") {
+          if (!config?.contact?.enabled) return null;
+          return (
+            <SectionCard key={section.id} title={title || "Contact us"}>
+              {subtitle ? <div className="mb-3 text-sm text-slate-300">{subtitle}</div> : null}
+              {embedBlock}
+              <ContactForm settings={config?.contact} />
+            </SectionCard>
           );
         }
 

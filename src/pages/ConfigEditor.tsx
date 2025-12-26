@@ -25,10 +25,14 @@ const defaults: SiteConfig = {
       { id: "admin", label: "Admin", href: "/admin" },
     ],
   },
+  contact: {
+    enabled: false,
+  },
 };
 
 type ThemeVar = { key: string; label: string; kind: "color" | "text" };
 type NavLink = NonNullable<NonNullable<SiteConfig["nav"]>["links"]>[number];
+type CustomPage = NonNullable<NonNullable<SiteConfig["pages"]>>[number];
 
 const themeVars: ThemeVar[] = [
   { key: "--color-bg", label: "Background", kind: "color" },
@@ -254,6 +258,20 @@ function ConfigEditor() {
   };
 
   const navLinks = form.nav?.links || [];
+  const pages = form.pages || [];
+  const updateContactField = (field: keyof NonNullable<SiteConfig["contact"]>, value: string | boolean) => {
+    setForm((prev) => {
+      const next = { ...(prev.contact || {}) } as NonNullable<SiteConfig["contact"]>;
+      if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (trimmed) next[field] = trimmed as any;
+        else delete (next as Record<string, unknown>)[field as string];
+      } else {
+        next[field] = value as any;
+      }
+      return { ...prev, contact: next };
+    });
+  };
 
   const addNavLink = () => {
     setForm((prev) => {
@@ -301,6 +319,71 @@ function ConfigEditor() {
         return { ...l, id };
       });
       return { ...prev, nav: { ...(prev.nav || {}), links: next } };
+    });
+  };
+
+  const addPage = () => {
+    setForm((prev) => {
+      const list = [...(prev.pages || [])];
+      const existingIds = new Set(list.map((p) => p.id));
+      const id = ensureUniqueId(existingIds, "custom-page");
+      list.push({
+        id,
+        title: "New custom page",
+        enabled: true,
+        html: "<div style=\"padding:24px\">Hello from Foundry.</div>",
+      });
+      return { ...prev, pages: list };
+    });
+  };
+
+  const updatePage = (index: number, patch: Partial<CustomPage>) => {
+    setForm((prev) => {
+      const list = [...(prev.pages || [])];
+      list[index] = { ...list[index], ...patch };
+      return { ...prev, pages: list };
+    });
+  };
+
+  const removePage = (index: number) => {
+    setForm((prev) => {
+      const list = [...(prev.pages || [])];
+      list.splice(index, 1);
+      return { ...prev, pages: list };
+    });
+  };
+
+  const movePage = (index: number, dir: -1 | 1) => {
+    setForm((prev) => {
+      const list = [...(prev.pages || [])];
+      const nextIdx = index + dir;
+      if (nextIdx < 0 || nextIdx >= list.length) return prev;
+      return { ...prev, pages: moveItem(list, index, nextIdx) };
+    });
+  };
+
+  const normalizePageIds = () => {
+    setForm((prev) => {
+      const list = [...(prev.pages || [])];
+      const ids = new Set<string>();
+      const next = list.map((p) => {
+        const base = slugify(p.id || p.title || "page") || "page";
+        const id = ensureUniqueId(ids, base);
+        ids.add(id);
+        return { ...p, id };
+      });
+      return { ...prev, pages: next };
+    });
+  };
+
+  const addPageNavLink = (page: CustomPage) => {
+    setForm((prev) => {
+      const links = [...(prev.nav?.links || [])];
+      const href = `/${page.id}`;
+      if (!links.some((l) => l.href === href)) {
+        links.push({ id: page.id, label: page.title || page.id, href, enabled: true });
+      }
+      return { ...prev, nav: { ...(prev.nav || {}), links } };
     });
   };
 
@@ -539,6 +622,47 @@ function ConfigEditor() {
           <div className="col-span-2 rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div>
+                <div className="text-sm font-semibold text-slate-100">Contact form</div>
+                <div className="text-xs text-slate-300">Store submissions and email them to your team.</div>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.contact?.enabled)}
+                  onChange={(e) => updateContactField("enabled", e.target.checked)}
+                />
+                Enabled
+              </label>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <input
+                className="input-field"
+                placeholder="Recipient email"
+                value={form.contact?.recipientEmail || ""}
+                onChange={(e) => updateContactField("recipientEmail", e.target.value)}
+              />
+              <input
+                className="input-field"
+                placeholder="Subject template (e.g., Contact: {{subject}})"
+                value={form.contact?.subjectTemplate || ""}
+                onChange={(e) => updateContactField("subjectTemplate", e.target.value)}
+              />
+              <textarea
+                className="input-field md:col-span-2 min-h-[80px]"
+                placeholder="Success message (optional)"
+                value={form.contact?.successMessage || ""}
+                onChange={(e) => updateContactField("successMessage", e.target.value)}
+              />
+            </div>
+            <div className="mt-2 text-xs text-slate-400">
+              Placeholders: {"{{name}}"}, {"{{email}}"}, {"{{subject}}"}; email is sent via ACS using Admin &gt; Email & notifications. Enable the Contact
+              section in Homepage sections to display the form.
+            </div>
+          </div>
+
+          <div className="col-span-2 rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
                 <div className="text-sm font-semibold text-slate-100">Navigation</div>
                 <div className="text-xs text-slate-300">Add, remove, rename, and reorder header links.</div>
               </div>
@@ -603,6 +727,144 @@ function ConfigEditor() {
               ))}
               {navLinks.length === 0 ? <div className="text-xs text-slate-400">No links configured.</div> : null}
             </div>
+          </div>
+
+          <div className="col-span-2 rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-100">Custom pages</div>
+                <div className="text-xs text-slate-300">Add full custom HTML/CSS/JS that runs in a sandboxed iframe.</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" className="btn btn-secondary" onClick={normalizePageIds}>
+                  Normalize IDs
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={addPage}>
+                  Add page
+                </button>
+              </div>
+            </div>
+
+            {pages.length === 0 ? (
+              <div className="text-xs text-slate-400">No custom pages yet.</div>
+            ) : (
+              <div className="space-y-4">
+                {pages.map((page, idx) => (
+                  <div key={`${page.id}-${idx}`} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-slate-100">{page.title || page.id}</div>
+                      <div className="flex items-center gap-2">
+                        <button type="button" className="btn btn-secondary" onClick={() => movePage(idx, -1)} disabled={idx === 0}>
+                          
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => movePage(idx, 1)}
+                          disabled={idx === pages.length - 1}
+                        >
+                          
+                        </button>
+                        <button type="button" className="btn btn-secondary" onClick={() => addPageNavLink(page)}>
+                          Add nav link
+                        </button>
+                        <button type="button" className="btn btn-secondary" onClick={() => removePage(idx)}>
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="grid gap-1">
+                        <span className="text-xs text-slate-300">ID (URL slug)</span>
+                        <input
+                          className="input-field"
+                          value={page.id}
+                          onChange={(e) => updatePage(idx, { id: e.target.value })}
+                          onBlur={(e) => updatePage(idx, { id: slugify(e.target.value) || page.id })}
+                        />
+                        <span className="text-xs text-slate-400">URL: /{page.id}</span>
+                      </label>
+                      <label className="grid gap-1">
+                        <span className="text-xs text-slate-300">Title</span>
+                        <input
+                          className="input-field"
+                          value={page.title || ""}
+                          onChange={(e) => updatePage(idx, { title: e.target.value })}
+                        />
+                      </label>
+                      <label className="flex items-center gap-2 text-xs text-slate-200">
+                        <input
+                          type="checkbox"
+                          checked={page.enabled ?? true}
+                          onChange={(e) => updatePage(idx, { enabled: e.target.checked })}
+                        />
+                        Enabled
+                      </label>
+                      <label className="grid gap-1">
+                        <span className="text-xs text-slate-300">Iframe height (px)</span>
+                        <input
+                          className="input-field"
+                          type="number"
+                          min={200}
+                          max={2000}
+                          value={page.height ?? ""}
+                          onChange={(e) => updatePage(idx, { height: Number(e.target.value) || undefined })}
+                        />
+                      </label>
+                      <label className="md:col-span-2 grid gap-1">
+                        <span className="text-xs text-slate-300">Description</span>
+                        <input
+                          className="input-field"
+                          value={page.description || ""}
+                          onChange={(e) => updatePage(idx, { description: e.target.value })}
+                        />
+                      </label>
+                      <label className="md:col-span-2 grid gap-1">
+                        <span className="text-xs text-slate-300">External scripts (one URL per line)</span>
+                        <textarea
+                          className="input-field min-h-[80px] font-mono text-xs"
+                          value={(page.externalScripts || []).join("\n")}
+                          onChange={(e) =>
+                            updatePage(idx, {
+                              externalScripts: e.target.value
+                                .split("\n")
+                                .map((line) => line.trim())
+                                .filter(Boolean),
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="md:col-span-2 grid gap-1">
+                        <span className="text-xs text-slate-300">HTML</span>
+                        <textarea
+                          className="input-field min-h-[140px] font-mono text-xs"
+                          value={page.html || ""}
+                          onChange={(e) => updatePage(idx, { html: e.target.value })}
+                        />
+                      </label>
+                      <label className="md:col-span-2 grid gap-1">
+                        <span className="text-xs text-slate-300">CSS</span>
+                        <textarea
+                          className="input-field min-h-[120px] font-mono text-xs"
+                          value={page.css || ""}
+                          onChange={(e) => updatePage(idx, { css: e.target.value })}
+                        />
+                      </label>
+                      <label className="md:col-span-2 grid gap-1">
+                        <span className="text-xs text-slate-300">JavaScript</span>
+                        <textarea
+                          className="input-field min-h-[140px] font-mono text-xs"
+                          value={page.script || ""}
+                          onChange={(e) => updatePage(idx, { script: e.target.value })}
+                        />
+                        <span className="text-xs text-slate-400">Need modules? Add a &lt;script type="module"&gt; tag in the HTML field.</span>
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="col-span-2">

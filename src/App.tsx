@@ -11,6 +11,7 @@ import Platforms from "./pages/Platforms";
 import Subscriptions from "./pages/Subscriptions";
 import TopicDetail from "./pages/TopicDetail";
 import Topics from "./pages/Topics";
+import CustomPage from "./pages/CustomPage";
 
 function App() {
   return (
@@ -27,6 +28,8 @@ function App() {
           <Route path="about" element={<About />} />
           <Route path="subscribe" element={<Subscriptions />} />
           <Route path="admin" element={<AdminDashboard />} />
+          <Route path="pages/:pageId" element={<CustomPage />} />
+          <Route path=":pageId" element={<CustomPage />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>

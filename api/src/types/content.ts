@@ -98,6 +98,27 @@ export const emailSettingsSchema = z.object({
 });
 export type EmailSettings = z.infer<typeof emailSettingsSchema>;
 
+export const contactSettingsSchema = z.object({
+  enabled: z.boolean().optional(),
+  recipientEmail: z.string().email().optional(),
+  subjectTemplate: z.string().optional(),
+  successMessage: z.string().optional(),
+});
+export type ContactSettings = z.infer<typeof contactSettingsSchema>;
+
+export const customPageSchema = z.object({
+  id: slugSchema,
+  title: z.string().min(1),
+  enabled: z.boolean().optional(),
+  description: z.string().optional(),
+  html: z.string().optional(),
+  css: z.string().optional(),
+  script: z.string().optional(),
+  externalScripts: z.array(urlSchema).optional(),
+  height: z.number().int().positive().max(2000).optional(),
+});
+export type CustomPage = z.infer<typeof customPageSchema>;
+
 const cssVarMapSchema = z.record(z.string(), z.string());
 
 const navLinkSchema = z.object({
@@ -228,6 +249,8 @@ export const siteConfigSchema = z.object({
     })
     .optional(),
   emailSettings: emailSettingsSchema.optional(),
+  contact: contactSettingsSchema.optional(),
+  pages: customPageSchema.array().optional(),
   ai: z
     .object({
       adminAssistant: z

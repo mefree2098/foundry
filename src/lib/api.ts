@@ -113,6 +113,36 @@ export const fetchEmailStats = () =>
     lastError?: string;
   }>("/email/stats");
 
+export const submitContact = (payload: {
+  name: string;
+  email: string;
+  subject?: string;
+  message: string;
+  company?: string;
+  phone?: string;
+  pageUrl?: string;
+}) => sendJson<{ ok: boolean; id?: string }>("/contact", "POST", payload);
+
+export const fetchContactSubmissions = (limit?: number) => {
+  const search = new URLSearchParams();
+  if (limit) search.set("limit", String(limit));
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return getJson<
+    {
+      id: string;
+      name: string;
+      email: string;
+      subject?: string;
+      message: string;
+      company?: string;
+      phone?: string;
+      pageUrl?: string;
+      createdAt: string;
+      status: string;
+    }[]
+  >(`/contact/submissions${suffix}`);
+};
+
 export const fetchAiUsage = () =>
   getJson<{
     updatedAt?: string;
@@ -169,3 +199,15 @@ export const aiChat = (payload: {
   messages: AiChatMessage[];
   context?: unknown;
 }) => sendJson<AiChatResponse>("/ai/chat", "POST", payload);
+
+export const aiChatStream = (payload: {
+  apiKey?: string;
+  model?: string;
+  messages: AiChatMessage[];
+  context?: unknown;
+}) =>
+  fetch(`${base}/ai/chat?stream=1`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });

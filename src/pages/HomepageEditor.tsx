@@ -97,6 +97,7 @@ const defaults: NonNullable<SiteConfig["home"]> = {
     { id: "news", type: "news", enabled: true, maxItems: 6, title: "Latest news" },
     { id: "topics", type: "topics", enabled: true, maxItems: 6, title: "Explore by topic" },
     { id: "newsletter", type: "newsletter", enabled: true },
+    { id: "contact", type: "contact", enabled: false, title: "Contact us" },
   ],
   trustSection: {
     title: "Trust & control",
@@ -196,6 +197,9 @@ function HomepageEditor() {
         base.title = "3D module";
         base.subtitle = "Add a 3D embed with custom code.";
         base.embed = { mode: "threejs", script: DEFAULT_THREE_SCRIPT, height: 360 };
+      } else if (normalizedType.toLowerCase() === "contact") {
+        base.title = "Contact us";
+        base.subtitle = "Tell us what you're building.";
       } else if (["platforms", "news", "topics"].includes(normalizedType.toLowerCase())) {
         base.title = normalizedType[0].toUpperCase() + normalizedType.slice(1);
         base.maxItems = 6;
@@ -379,6 +383,7 @@ function HomepageEditor() {
                   <option value="richText">Add: Rich text</option>
                   <option value="cta">Add: CTA</option>
                   <option value="embed3d">Add: 3D embed</option>
+                  <option value="contact">Add: Contact form</option>
                 </select>
                 <button
                   type="button"

@@ -128,7 +128,9 @@ npm run build
 - 3D embeds on platform, news, and topic detail pages via `custom.embedHtml` + `custom.embedHeight`.
 - Media library backed by Azure Blob Storage (upload, browse, reuse).
 - OpenAI image generation (`gpt-image-1.5`) with automatic Blob upload.
-- AI usage tracking (chat + image tokens) with all‑time + last‑30‑days rollups.
+- Contact form module (stores submissions in Cosmos DB and emails them via ACS).
+- Custom code pages (HTML/CSS/JS) that run inside sandboxed iframes and can be linked from navigation.
+- AI usage tracking (chat + image tokens) with all-time + last-30-days rollups.
 - Pricing overrides for cost estimation (manual or import from pricing text).
 
 ## AI Assistant capabilities

@@ -18,6 +18,7 @@ import {
   deletePlatform,
   deleteTopic,
 } from "../lib/api";
+import type { SiteConfig } from "../lib/types";
 
 type Personality = { id: string; name: string; prompt: string };
 
@@ -78,6 +79,29 @@ function safeJson(value: unknown) {
   } catch {
     return String(value);
   }
+}
+
+function truncateText(value?: string, maxLength = 2000) {
+  const text = (value || "").trim();
+  if (!text) return undefined;
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}\n/* ... truncated ... */`;
+}
+
+function summarizeConfigForAi(config?: SiteConfig) {
+  if (!config) return config;
+  const pages = (config.pages || []).map((page) => ({
+    id: page.id,
+    title: page.title,
+    enabled: page.enabled,
+    description: page.description,
+    height: page.height,
+    externalScripts: page.externalScripts,
+    html: truncateText(page.html),
+    css: truncateText(page.css),
+    script: truncateText(page.script),
+  }));
+  return { ...config, pages };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -154,6 +178,7 @@ function AdminAiAssistant() {
   const [personalities, setPersonalities] = useState<Personality[]>(PERSONALITY_PRESETS);
   const [activePersonalityId, setActivePersonalityId] = useState<string>(PERSONALITY_PRESETS[0]?.id || "professional");
   const [personalityDirty, setPersonalityDirty] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
 
   useEffect(() => {
     if (!config) return;
@@ -185,19 +210,14 @@ function AdminAiAssistant() {
   }, [config]);
 
   const context = useMemo(() => {
+    const configSummary = summarizeConfigForAi(config);
     return {
-      config,
+      config: configSummary,
       platforms: platforms.map((p) => ({ id: p.id, name: p.name })),
       topics: topics.map((t) => ({ id: t.id, name: t.name })),
       news: news.map((n) => ({ id: n.id, title: n.title, status: n.status, publishDate: n.publishDate })),
     };
   }, [config, platforms, topics, news]);
-
-  const chat = useMutation({
-    mutationFn: (payload: { messages: AiChatMessage[] }) =>
-      aiChat({ messages: payload.messages, context }),
-    onError: (err: unknown) => alert(err instanceof Error ? err.message : "AI request failed"),
-  });
 
   const hasStoredKey = Boolean(config?.ai?.adminAssistant?.openai?.hasApiKey);
 
@@ -337,13 +357,35 @@ function AdminAiAssistant() {
     }
     const userMessage: AiChatMessage = { role: "user", content };
     const nextMessages: AiChatMessage[] = [...messages, userMessage];
-    setMessages(nextMessages);
+    setMessages([...nextMessages, { role: "assistant", content: "Working on it..." }]);
     setDraft("");
+    setPendingActions([]);
+    setIsStreaming(true);
 
-    const res = await chat.mutateAsync({ messages: nextMessages });
-    const assistantMessage: AiChatMessage = { role: "assistant", content: res.assistantMessage };
-    setMessages((prev) => [...prev, assistantMessage]);
-    setPendingActions((res.actions || []).filter(Boolean));
+    const finalizeAssistant = (assistantMessage: string, actions: AiChatAction[]) => {
+      setMessages((prev) => {
+        const next = [...prev];
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          if (next[i].role === "assistant") {
+            next[i] = { ...next[i], content: assistantMessage };
+            return next;
+          }
+        }
+        next.push({ role: "assistant", content: assistantMessage });
+        return next;
+      });
+      setPendingActions((actions || []).filter(Boolean));
+    };
+
+    try {
+      const res = await aiChat({ messages: nextMessages.slice(-10), context });
+      finalizeAssistant(String(res.assistantMessage || ""), res.actions || []);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "AI request failed";
+      alert(message);
+    } finally {
+      setIsStreaming(false);
+    }
   };
 
   return (
@@ -564,13 +606,13 @@ function AdminAiAssistant() {
               onChange={(e) => setDraft(e.target.value)}
             />
             <div className="flex flex-wrap gap-2">
-              <button type="button" className="btn btn-primary" disabled={chat.isPending} onClick={send}>
-                {chat.isPending ? "Thinking..." : "Send"}
+              <button type="button" className="btn btn-primary" disabled={isStreaming} onClick={send}>
+                {isStreaming ? "Streaming..." : "Send"}
               </button>
-              <button type="button" className="btn btn-secondary" onClick={() => setMessages([])} disabled={chat.isPending}>
+              <button type="button" className="btn btn-secondary" onClick={() => setMessages([])} disabled={isStreaming}>
                 Clear chat
               </button>
-              <button type="button" className="btn btn-secondary" onClick={() => setPendingActions([])} disabled={chat.isPending}>
+              <button type="button" className="btn btn-secondary" onClick={() => setPendingActions([])} disabled={isStreaming}>
                 Clear actions
               </button>
             </div>
@@ -584,7 +626,7 @@ function AdminAiAssistant() {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={apply.isPending || chat.isPending}
+                disabled={apply.isPending || isStreaming}
                 onClick={() => apply.mutate(pendingActions)}
               >
                 {apply.isPending ? "Applying..." : "Apply actions"}
