@@ -137,6 +137,7 @@ npm run build
 The Admin AI Assistant can:
 - Create/update/delete platforms, news, topics, and homepage sections.
 - Update navigation, theming, and content schema fields.
+- Create or edit custom code pages (HTML/CSS/JS) that run on the site inside sandboxed iframes.
 - Generate images (with confirmation) and attach them to content.
 - Suggest or insert 3D embed code for homepage sections or content items.
 

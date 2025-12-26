@@ -607,7 +607,7 @@ function AdminAiAssistant() {
             />
             <div className="flex flex-wrap gap-2">
               <button type="button" className="btn btn-primary" disabled={isStreaming} onClick={send}>
-                {isStreaming ? "Streaming..." : "Send"}
+                {isStreaming ? "Thinking..." : "Send"}
               </button>
               <button type="button" className="btn btn-secondary" onClick={() => setMessages([])} disabled={isStreaming}>
                 Clear chat
