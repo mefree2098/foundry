@@ -1,6 +1,6 @@
 #requires -Version 7
 Param(
-  [string]$SourcePath = (Join-Path $PSScriptRoot "..\\img\\fixed.png"),
+  [string]$SourcePath = (Join-Path $PSScriptRoot "..\\img\\FoundryIcon.png"),
   [string]$OutDir = (Join-Path $PSScriptRoot "..\\public\\img")
 )
 
@@ -81,9 +81,9 @@ try {
   try {
     $masked = New-CircularMask $square
     try {
-      Resize-Png $masked 512 (Join-Path $OutDir "ntr-logo.png") 0
-      Resize-Png $masked 64 (Join-Path $OutDir "ntr-logo-64.png") 3
-      Resize-Png $masked 32 (Join-Path $OutDir "ntr-logo-32.png") 2
+      Resize-Png $masked 512 (Join-Path $OutDir "FoundryIcon.png") 0
+      Resize-Png $masked 64 (Join-Path $OutDir "FoundryIcon-64.png") 3
+      Resize-Png $masked 32 (Join-Path $OutDir "FoundryIcon-32.png") 2
     } finally {
       $masked.Dispose()
     }

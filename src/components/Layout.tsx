@@ -21,7 +21,7 @@ function isInternalHref(href: string) {
 
 function Layout() {
   const { data: config } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
-  const brandLogo = config?.logoUrl || "/img/ntr-logo-64.png";
+  const brandLogo = config?.logoUrl || "/img/FoundryIcon-64.png";
   const brandName = config?.siteName || "Foundry";
   const footerTagline = config?.footerTagline || "AI-native sites and apps, powered by your AI";
   const [menuOpen, setMenuOpen] = useState(false);

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="img/FoundryIcon.png" alt="Foundry logo" width="280" />
+</p>
+
 # Foundry
 
 Foundry is a simple, open-source “deploy a site for free on Azure” starter:
