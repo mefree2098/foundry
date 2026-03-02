@@ -12,10 +12,11 @@
     "lint": "eslint . --ext .ts --max-warnings=0"
   },
   "dependencies": {
+    "@azure/communication-email": "1.1.0",
     "@azure/cosmos": "4.9.0",
     "@azure/functions": "4.10.0",
     "@azure/storage-blob": "^12.29.1",
-    "@azure/communication-email": "1.1.0",
+    "@openai/codex": "^0.107.0",
     "zod": "4.2.1"
   },
   "devDependencies": {

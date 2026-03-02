@@ -281,17 +281,27 @@ function AdminAiAssistant() {
 
   const openCodexLogin = async () => {
     const result = await codexModelsQuery.refetch();
+    if (result.error) {
+      const message = result.error instanceof Error ? result.error.message : "Unable to reach Codex backend.";
+      alert(`Codex backend error: ${message}`);
+      return;
+    }
     const payload = result.data;
     const authUrl = payload?.loginRequired ? payload.authUrl : undefined;
     if (authUrl) {
-      window.open(authUrl, "_blank", "noopener,noreferrer");
+      const popup = window.open(authUrl, "_blank", "noopener,noreferrer");
+      if (!popup) {
+        alert("Popup blocked. Allow popups for this site and click Sign in to OpenAI again.");
+      }
       return;
     }
     if (payload?.models?.length) {
       alert("Codex is already connected to OpenAI.");
       return;
     }
-    alert("Unable to start Codex login right now. Check Codex path/home and try again.");
+    alert(
+      "Codex backend returned no login URL and no models. This usually means Codex is not installed/configured on the server (CODEX_PATH/CODEX_HOME).",
+    );
   };
 
   const saveOpenAiSettings = useMutation({
@@ -559,10 +569,10 @@ function AdminAiAssistant() {
                       </>
                     ) : codexModelsQuery.isError ? (
                       codexModelsQuery.error instanceof Error ? codexModelsQuery.error.message : "Failed to load models."
-                    ) : codexModelOptions.length ? (
-                      `${codexModelOptions.length} models available from Codex.`
+                    ) : codexModels.length ? (
+                      `${codexModels.length} models available from Codex.`
                     ) : (
-                      "No Codex models available yet."
+                      "No Codex models available yet. If this is hosted, ensure server-side CODEX_PATH/CODEX_HOME are configured."
                     )}
                   </div>
                 </div>

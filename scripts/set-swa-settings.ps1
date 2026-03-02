@@ -8,7 +8,9 @@ Param(
   [string]$CosmosDatabase,
   [string]$StorageConnectionString,
   [string]$StorageContainerName = "media",
-  [string]$PublicSiteUrl
+  [string]$PublicSiteUrl,
+  [string]$CodexPath,
+  [string]$CodexHome
 )
 
 Write-Host "Setting SWA app settings..." -ForegroundColor Cyan
@@ -50,6 +52,14 @@ if ($StorageConnectionString) {
 
 if ($PublicSiteUrl) {
   $settings.PUBLIC_SITE_URL = $PublicSiteUrl
+}
+
+if ($CodexPath) {
+  $settings.CODEX_PATH = $CodexPath
+}
+
+if ($CodexHome) {
+  $settings.CODEX_HOME = $CodexHome
 }
 
 $settingNames = @(

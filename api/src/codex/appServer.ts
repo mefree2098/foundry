@@ -1,10 +1,16 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
+import { accessSync, constants as fsConstants, mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { InvocationContext } from "@azure/functions";
 
 const DEFAULT_CODEX_RPC_TIMEOUT_MS = Number(process.env.CODEX_RPC_TIMEOUT_MS || 45000);
 const DEFAULT_CODEX_TURN_TIMEOUT_MS = Number(process.env.CODEX_TURN_TIMEOUT_MS || 180000);
 const STDERR_TAIL_MAX = 2000;
+const DEFAULT_CODEX_HOME_TMP_DIR = "ntechr-codex-home";
+const DEFAULT_CODEX_HOME_AZURE_DIR = "/home/site/.codex";
 
 type JsonRpcId = number | string;
 
@@ -63,6 +69,15 @@ type PendingRequest = {
   method: string;
 };
 
+type CodexLaunchSpec = {
+  command: string;
+  argsPrefix: string[];
+  label: string;
+  source: "explicit" | "bundled" | "path";
+};
+
+const requireFromHere = createRequire(import.meta.url);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -94,6 +109,105 @@ function parseUsage(value: unknown): CodexUsage | undefined {
     promptTokens: Number.isFinite(promptTokens) && promptTokens > 0 ? promptTokens : 0,
     completionTokens: Number.isFinite(completionTokens) && completionTokens > 0 ? completionTokens : 0,
     totalTokens,
+  };
+}
+
+function unique(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function ensureWritableDirectory(dirPath: string): string {
+  const normalized = path.resolve(dirPath.trim());
+  mkdirSync(normalized, { recursive: true });
+  accessSync(normalized, fsConstants.R_OK | fsConstants.W_OK);
+  return normalized;
+}
+
+function resolveDefaultCodexHomeCandidates() {
+  const candidates: string[] = [];
+  const runningInAzure = Boolean((process.env.WEBSITE_SITE_NAME || "").trim() || (process.env.WEBSITE_INSTANCE_ID || "").trim());
+  if (runningInAzure && process.platform !== "win32") {
+    candidates.push(path.join(DEFAULT_CODEX_HOME_AZURE_DIR, "ntechr"));
+    candidates.push(DEFAULT_CODEX_HOME_AZURE_DIR);
+  }
+  candidates.push(path.join(process.cwd(), ".codex-home"));
+  candidates.push(path.join(tmpdir(), DEFAULT_CODEX_HOME_TMP_DIR));
+  return unique(candidates);
+}
+
+function resolveCodexHomePath(requestedHome?: string): string | undefined {
+  const explicit = (requestedHome || "").trim();
+  if (explicit) {
+    try {
+      return ensureWritableDirectory(explicit);
+    } catch (error) {
+      throw new Error(`Configured Codex home is not writable (${explicit}): ${toErrorMessage(error)}`);
+    }
+  }
+  for (const candidate of resolveDefaultCodexHomeCandidates()) {
+    try {
+      return ensureWritableDirectory(candidate);
+    } catch {
+      // Try next candidate.
+    }
+  }
+  return undefined;
+}
+
+function resolveBundledCodexEntrypoint(): string | undefined {
+  try {
+    return requireFromHere.resolve("@openai/codex/bin/codex.js");
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveCodexLaunchSpec(requestedPath: string): CodexLaunchSpec {
+  const raw = requestedPath.trim();
+  const normalized = raw || "codex";
+  const lowered = normalized.toLowerCase();
+  const bundledEntrypoint = resolveBundledCodexEntrypoint();
+  const explicitNodeScript = /\.(?:mjs|cjs|js)$/i.test(normalized);
+
+  if (explicitNodeScript) {
+    return {
+      command: process.execPath,
+      argsPrefix: [normalized],
+      label: `node ${normalized}`,
+      source: "explicit",
+    };
+  }
+
+  if (!raw || lowered === "codex" || lowered === "@openai/codex") {
+    if (bundledEntrypoint) {
+      return {
+        command: process.execPath,
+        argsPrefix: [bundledEntrypoint],
+        label: `bundled @openai/codex (${bundledEntrypoint})`,
+        source: "bundled",
+      };
+    }
+    return {
+      command: "codex",
+      argsPrefix: [],
+      label: "codex (PATH)",
+      source: "path",
+    };
+  }
+
+  return {
+    command: normalized,
+    argsPrefix: [],
+    label: normalized,
+    source: "explicit",
   };
 }
 
@@ -151,6 +265,8 @@ export class CodexLoginRequiredError extends Error {
 
 class CodexAppServerSession {
   private readonly child: ChildProcessWithoutNullStreams;
+  private readonly launchSpec: CodexLaunchSpec;
+  private readonly resolvedCodexHome?: string;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly notificationHandlers = new Set<(method: string, params: unknown) => void>();
   private nextId = 1;
@@ -163,11 +279,12 @@ class CodexAppServerSession {
     private readonly requestTimeoutMs: number,
   ) {
     const env = { ...process.env };
-    if (options.codexHome?.trim()) {
-      env.CODEX_HOME = options.codexHome.trim();
+    this.resolvedCodexHome = resolveCodexHomePath(options.codexHome);
+    if (this.resolvedCodexHome) {
+      env.CODEX_HOME = this.resolvedCodexHome;
     }
-    const codexPath = options.codexPath.trim() || "codex";
-    this.child = spawn(codexPath, ["app-server", "--listen", "stdio://"], {
+    this.launchSpec = resolveCodexLaunchSpec(options.codexPath);
+    this.child = spawn(this.launchSpec.command, [...this.launchSpec.argsPrefix, "app-server", "--listen", "stdio://"], {
       stdio: ["pipe", "pipe", "pipe"],
       env,
       windowsHide: true,
@@ -180,6 +297,16 @@ class CodexAppServerSession {
       this.stderrTail = `${this.stderrTail}${chunk}`.slice(-STDERR_TAIL_MAX);
     });
     this.child.on("error", (error) => {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code === "ENOENT") {
+        this.rejectAll(
+          this.decorateError(
+            `Codex process error: executable not found using ${this.launchSpec.label}. ` +
+              "Install @openai/codex in the API package or set CODEX_PATH to a valid executable.",
+          ),
+        );
+        return;
+      }
       this.rejectAll(this.decorateError(`Codex process error: ${toErrorMessage(error)}`));
     });
     this.child.on("exit", (code, signal) => {
@@ -189,8 +316,12 @@ class CodexAppServerSession {
   }
 
   private decorateError(message: string): Error {
+    const details = [`launch=${this.launchSpec.label}`];
+    if (this.resolvedCodexHome) details.push(`CODEX_HOME=${this.resolvedCodexHome}`);
+    details.push(`source=${this.launchSpec.source}`);
     const tail = this.stderrTail.trim();
-    return new Error(tail ? `${message}. codex stderr: ${tail}` : message);
+    const withRuntime = `${message}. codex runtime: ${details.join(", ")}`;
+    return new Error(tail ? `${withRuntime}. codex stderr: ${tail}` : withRuntime);
   }
 
   private rejectAll(error: Error) {

@@ -4,6 +4,11 @@ This document captures a full, working implementation pattern for adding a **Cod
 
 Use this when you want an AI coder to implement the same capability quickly in another project.
 
+Critical architecture fact:
+
+- There is **no separate hosted "Codex backend service"** in this pattern.
+- Your app backend is the Codex host and must be able to run `codex app-server` itself.
+
 ---
 
 ## 1) Target outcome
@@ -36,7 +41,7 @@ For a persisted config object (example path: `ai.adminAssistant.openai`), add:
   "apiKey": "optional-secret",
   "hasApiKey": true,
   "clearApiKey": false,
-  "codexPath": "optional path to binary, fallback to `codex`",
+  "codexPath": "optional path to binary, fallback to bundled `@openai/codex` (then `codex`)",
   "codexHome": "optional isolated state directory",
   "hasCodexPath": true,
   "model": "mode-specific default model"
@@ -79,7 +84,7 @@ Example defaults:
 
 - `authMode`: `apiKey`
 - `model`: `gpt-4o-mini` (`apiKey`) / `gpt-5.1-codex` (`codexPath`)
-- `codexPath`: `process.env.CODEX_PATH || "codex"`
+- `codexPath`: `process.env.CODEX_PATH || "codex"` (resolved to bundled `@openai/codex` when available)
 
 ---
 
@@ -88,9 +93,9 @@ Example defaults:
 For each request/session:
 
 1. Spawn child process:
-   - command: `codex app-server --listen stdio://`
+   - command: `codex app-server --listen stdio://` (or bundled equivalent from `@openai/codex`)
    - stdio: piped (`stdin`, `stdout`, `stderr`)
-   - set `CODEX_HOME` if provided
+   - set `CODEX_HOME` if provided (or derive a writable default)
 2. JSONL RPC framing:
    - write one JSON object per line
    - parse stdout by `\n`
@@ -231,12 +236,31 @@ When `authMode === "codexPath"`:
 - render a model `<select>` populated from `/api/ai/codex-models`
 - show a "Refresh model list" button
 - if `loginRequired`, show clickable login URL
+- always show an explicit primary button: **"Sign in to OpenAI"** (do not hide login behind errors)
 - auto-select `isDefault` model if current model is missing
 - keep a fallback "custom current model" option if persisted model is not in list
 
 When `authMode === "apiKey"`:
 
 - keep existing free-text model input
+
+### 9.3 Explicit login UX requirement (required)
+
+Do not rely on users seeing a background error or implicit login prompt.
+
+In Codex mode, the UI must include a visible login control:
+
+- Button label: `Sign in to OpenAI`
+- On click:
+  1. call `/api/ai/codex-models` (or equivalent backend probe)
+  2. if `loginRequired=true` and `authUrl` exists, open `authUrl` in a new browser tab/window
+  3. if models are returned, show "already connected" status
+  4. if neither happens, show a clear actionable error (path/home misconfig, process launch failure, etc.)
+
+Recommended copy in Codex mode:
+
+- status line should say whether auth mode/path changes are saved yet
+- show a short instruction near the button (example: "Click Sign in to OpenAI to connect Codex subscription")
 
 ---
 
@@ -262,6 +286,34 @@ Useful env vars:
 
 Capture a stderr tail from Codex process and append it to errors for easier debugging.
 
+### 11.1 Runtime packaging requirement (required)
+
+To make this work in hosted deployments, do not rely on a global system install of `codex`.
+
+Required approach:
+
+1. Add `@openai/codex` as a dependency of the backend package.
+2. At runtime, resolve `@openai/codex/bin/codex.js` and spawn via `node <resolved-script> app-server --listen stdio://`.
+3. Keep `CODEX_PATH` override support for explicit custom binaries, but default to bundled runtime when possible.
+
+If you skip this, hosted environments often fail with "unable to start login" because `codex` is not on server PATH.
+
+### 11.2 `CODEX_HOME` defaulting (required)
+
+If `CODEX_HOME`/`codexHome` is not explicitly set:
+
+1. Pick a writable server path automatically (for Azure Linux, prefer `/home/site/.codex/...`).
+2. Create the directory before spawning Codex.
+3. Include resolved `CODEX_HOME` in diagnostics.
+
+This avoids startup/auth failures caused by unwritable home directories.
+
+Hosted deployment reminder:
+
+- `codexPath` in the admin UI refers to the **server filesystem path** (API runtime), not the admin user's local machine.
+- You must ensure the server can execute Codex (bundle/install runtime) and set `CODEX_PATH` only when overriding defaults.
+- For Azure-hosted Linux apps, use a writable persistent location for `CODEX_HOME` (for example under `/home/...`), otherwise login state may not persist.
+
 ---
 
 ## 12) Security and state rules
@@ -280,7 +332,7 @@ Capture a stderr tail from Codex process and append it to errors for easier debu
 3. Add chat-mode switch in backend (`apiKey` vs `codexPath`).
 4. Add model-list backend endpoint using `model/list`.
 5. Add frontend auth-mode control + codex path/home inputs.
-6. Add codex model picker + refresh + login-required UX.
+6. Add codex model picker + refresh + **explicit Sign in to OpenAI button** + login-required UX.
 7. Keep API-key mode and non-Codex features intact.
 8. Add build/lint + live smoke tests for:
    - chat via codex path
@@ -316,4 +368,3 @@ Cons:
 - extra process startup overhead
 
 For higher throughput, move to a pooled or persistent session host with stronger concurrency controls.
-
