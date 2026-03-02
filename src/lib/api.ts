@@ -419,16 +419,28 @@ export type CodexModelPickerItem = {
   upgrade?: string;
 };
 
-export const fetchCodexModels = (params?: { codexPath?: string; codexHome?: string; includeHidden?: boolean }) => {
+export type CodexModelsResponse = {
+  source: "codex";
+  includeHidden: boolean;
+  loginRequired: boolean;
+  authUrl?: string;
+  pendingLoginId?: string;
+  callbackHint?: string;
+  models: CodexModelPickerItem[];
+};
+
+export const fetchCodexModels = (params?: { codexPath?: string; codexHome?: string; includeHidden?: boolean; startLogin?: boolean }) => {
   const search = new URLSearchParams();
   if (params?.codexPath) search.set("codexPath", params.codexPath);
   if (params?.codexHome) search.set("codexHome", params.codexHome);
   if (params?.includeHidden) search.set("includeHidden", "1");
+  if (params?.startLogin) search.set("startLogin", "1");
   const suffix = search.toString() ? `?${search.toString()}` : "";
-  return getJson<{ source: "codex"; includeHidden: boolean; loginRequired: boolean; authUrl?: string; models: CodexModelPickerItem[] }>(
-    `/ai/codex-models${suffix}`,
-  );
+  return getJson<CodexModelsResponse>(`/ai/codex-models${suffix}`);
 };
+
+export const completeCodexLogin = (payload: { loginId: string; callbackUrl: string }) =>
+  sendJson<{ success: boolean }>("/ai/codex-login/complete", "POST", payload);
 
 export const aiChat = (payload: {
   authMode?: "apiKey" | "codexPath";

@@ -106,6 +106,7 @@ For each request/session:
    - call `account/read { refreshToken: false }`
    - if `requiresOpenaiAuth=true`, call `account/login/start { type: "chatgpt" }`
    - surface `authUrl` to UI/API caller
+   - note: returned `authUrl` uses `redirect_uri=http://localhost:<port>/auth/callback` by design
 5. Thread + turn:
    - `thread/start` with model/cwd/etc.
    - `turn/start` with input + model + output schema (if needed)
@@ -207,6 +208,8 @@ Implement a dedicated API endpoint, for example:
   - `codexPath`
   - `codexHome`
   - `includeHidden`
+  - `startLogin` (explicitly starts a pending login relay session)
+- `POST /api/ai/codex-login/complete` for pasted localhost callback URL relay
 
 Return a simple UI-ready shape:
 
@@ -256,6 +259,14 @@ In Codex mode, the UI must include a visible login control:
   2. if `loginRequired=true` and `authUrl` exists, open `authUrl` in a new browser tab/window
   3. if models are returned, show "already connected" status
   4. if neither happens, show a clear actionable error (path/home misconfig, process launch failure, etc.)
+
+For hosted web apps, add explicit localhost-callback completion UX:
+
+1. Start login and store a short-lived pending login session server-side (same process instance).
+2. If browser lands on `http://localhost:.../auth/callback` and fails, tell the user to copy that full URL.
+3. Provide a `Complete login` action that posts the pasted URL back to your backend.
+4. Backend forwards `code/state` to the Codex local callback URL and waits for `account/login/completed`.
+5. Refresh model list after completion.
 
 Recommended copy in Codex mode:
 
@@ -313,6 +324,7 @@ Hosted deployment reminder:
 - `codexPath` in the admin UI refers to the **server filesystem path** (API runtime), not the admin user's local machine.
 - You must ensure the server can execute Codex (bundle/install runtime) and set `CODEX_PATH` only when overriding defaults.
 - For Azure-hosted Linux apps, use a writable persistent location for `CODEX_HOME` (for example under `/home/...`), otherwise login state may not persist.
+- If you implement localhost callback relay, keep the pending login process alive long enough for callback completion and use a short TTL + cleanup.
 
 ---
 
@@ -330,11 +342,13 @@ Hosted deployment reminder:
 1. Add config fields (`authMode`, `codexPath`, `codexHome`, flags).
 2. Add Codex app-server client module (spawn + JSONL + router + handshake + auth + turn).
 3. Add chat-mode switch in backend (`apiKey` vs `codexPath`).
-4. Add model-list backend endpoint using `model/list`.
-5. Add frontend auth-mode control + codex path/home inputs.
-6. Add codex model picker + refresh + **explicit Sign in to OpenAI button** + login-required UX.
-7. Keep API-key mode and non-Codex features intact.
-8. Add build/lint + live smoke tests for:
+4. Add model-list backend endpoint using `model/list` plus explicit `startLogin` support.
+5. Add login completion endpoint for pasted localhost callback relay.
+6. Add frontend auth-mode control + codex path/home inputs.
+7. Add codex model picker + refresh + **explicit Sign in to OpenAI button** + login-required UX.
+8. Add callback paste + `Complete login` UX for hosted deployments.
+9. Keep API-key mode and non-Codex features intact.
+10. Add build/lint + live smoke tests for:
    - chat via codex path
    - model/list via codex path
 

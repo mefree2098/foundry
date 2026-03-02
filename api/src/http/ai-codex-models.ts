@@ -1,9 +1,9 @@
 import { app, type HttpRequest, type HttpResponseInit, type InvocationContext } from "@azure/functions";
-import { ensureAdmin } from "../auth.js";
+import { ensureAdmin, getClientPrincipal } from "../auth.js";
 import { database } from "../client.js";
 import { containers } from "../cosmos.js";
 import { siteConfigSchema } from "../types/content.js";
-import { CodexLoginRequiredError, listCodexModels } from "../codex/appServer.js";
+import { CodexLoginRequiredError, listCodexModels, startCodexLoginRelay } from "../codex/appServer.js";
 
 function parseBoolean(value: string | null): boolean {
   if (!value) return false;
@@ -33,10 +33,13 @@ async function getStoredCodexSettings() {
 async function aiCodexModels(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   const auth = ensureAdmin(req);
   if (!auth.ok) return { status: auth.status, body: auth.body };
+  const principal = getClientPrincipal(req);
+  if (!principal?.userId) return { status: 401, body: "Unauthorized" };
 
   const queryPath = (req.query.get("codexPath") || "").trim();
   const queryHome = (req.query.get("codexHome") || "").trim();
   const includeHidden = parseBoolean(req.query.get("includeHidden"));
+  const startLogin = parseBoolean(req.query.get("startLogin"));
 
   const stored = await getStoredCodexSettings();
   const finalCodexPath = (queryPath || stored.codexPath || process.env.CODEX_PATH || "codex").trim();
@@ -61,6 +64,24 @@ async function aiCodexModels(req: HttpRequest, context: InvocationContext): Prom
     };
   } catch (err) {
     if (err instanceof CodexLoginRequiredError) {
+      let pendingLoginId: string | undefined;
+      let authUrl = err.authUrl;
+      if (startLogin) {
+        try {
+          const started = await startCodexLoginRelay({
+            ownerId: principal.userId,
+            codexPath: finalCodexPath,
+            codexHome: finalCodexHome,
+            context,
+          });
+          if (started?.loginKey) {
+            pendingLoginId = started.loginKey;
+            authUrl = started.authUrl;
+          }
+        } catch (relayErr) {
+          context.log(`ai-codex-models login relay start failed: ${relayErr instanceof Error ? relayErr.message : String(relayErr)}`);
+        }
+      }
       return {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -68,7 +89,9 @@ async function aiCodexModels(req: HttpRequest, context: InvocationContext): Prom
           source: "codex",
           includeHidden,
           loginRequired: true,
-          authUrl: err.authUrl,
+          authUrl,
+          pendingLoginId,
+          callbackHint: startLogin ? "If login lands on localhost and fails, paste that full URL into Complete login." : undefined,
           models: [],
         }),
       };
@@ -84,4 +107,3 @@ app.http("ai-codex-models", {
   route: "ai/codex-models",
   handler: aiCodexModels,
 });
-

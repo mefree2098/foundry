@@ -6,6 +6,7 @@ import {
   type AiChatAction,
   type AiChatMessage,
   type CodexModelPickerItem,
+  completeCodexLogin,
   fetchCodexModels,
   fetchConfig,
   fetchNews,
@@ -171,6 +172,8 @@ function AdminAiAssistant() {
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [codexPathDraft, setCodexPathDraft] = useState("");
   const [codexHomeDraft, setCodexHomeDraft] = useState("");
+  const [codexPendingLoginId, setCodexPendingLoginId] = useState("");
+  const [codexCallbackDraft, setCodexCallbackDraft] = useState("");
   const [model, setModel] = useState("gpt-4o-mini");
   const [imageModel, setImageModel] = useState("gpt-image-1.5");
   const [imageSize, setImageSize] = useState("1024x1024");
@@ -217,6 +220,8 @@ function AdminAiAssistant() {
     setImageOutputFormat((cfgImageOutputFormat as any) || "png");
     setCodexPathDraft((cfgCodexPath && cfgCodexPath.trim()) || "");
     setCodexHomeDraft((cfgCodexHome && cfgCodexHome.trim()) || "");
+    setCodexPendingLoginId("");
+    setCodexCallbackDraft("");
     setApiKeyDraft("");
     setClearStoredKey(false);
   }, [config]);
@@ -272,6 +277,12 @@ function AdminAiAssistant() {
     if (preferred?.model) setModel(preferred.model);
   }, [authMode, codexModels, model]);
 
+  useEffect(() => {
+    if (authMode === "codexPath") return;
+    setCodexPendingLoginId("");
+    setCodexCallbackDraft("");
+  }, [authMode]);
+
   const hasStoredKey = Boolean(config?.ai?.adminAssistant?.openai?.hasApiKey);
   const hasStoredCodexPath = Boolean(
     config?.ai?.adminAssistant?.openai?.hasCodexPath || (config?.ai?.adminAssistant?.openai?.codexPath || "").trim(),
@@ -279,20 +290,55 @@ function AdminAiAssistant() {
   const configuredAuthMode: OpenAiAuthMode = config?.ai?.adminAssistant?.openai?.authMode === "codexPath" ? "codexPath" : "apiKey";
   const authModeSaved = authMode === configuredAuthMode;
 
+  useEffect(() => {
+    const pendingId = codexModelsQuery.data?.pendingLoginId;
+    if (!pendingId) return;
+    setCodexPendingLoginId(pendingId);
+  }, [codexModelsQuery.data?.pendingLoginId]);
+
+  const completeCodexLoginMutation = useMutation({
+    mutationFn: async () => {
+      const loginId = codexPendingLoginId.trim();
+      const callbackUrl = codexCallbackDraft.trim();
+      if (!loginId) {
+        throw new Error("No pending login session found. Click Sign in to OpenAI first.");
+      }
+      if (!callbackUrl) {
+        throw new Error("Paste the localhost callback URL from your browser first.");
+      }
+      await completeCodexLogin({ loginId, callbackUrl });
+    },
+    onSuccess: async () => {
+      setCodexCallbackDraft("");
+      setCodexPendingLoginId("");
+      await codexModelsQuery.refetch();
+      alert("Codex login completed. Model list refreshed.");
+    },
+    onError: (err: unknown) => {
+      alert(err instanceof Error ? err.message : "Failed to complete Codex login");
+    },
+  });
+
   const openCodexLogin = async () => {
-    const result = await codexModelsQuery.refetch();
-    if (result.error) {
-      const message = result.error instanceof Error ? result.error.message : "Unable to reach Codex backend.";
+    let payload: Awaited<ReturnType<typeof fetchCodexModels>> | undefined;
+    try {
+      payload = await fetchCodexModels({
+        codexPath: codexPathDraft.trim() || undefined,
+        codexHome: codexHomeDraft.trim() || undefined,
+        startLogin: true,
+      });
+      queryClient.setQueryData(["ai", "codex-models", authMode], payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to reach Codex backend.";
       alert(`Codex backend error: ${message}`);
       return;
     }
-    const payload = result.data;
     const authUrl = payload?.loginRequired ? payload.authUrl : undefined;
+    if (payload?.pendingLoginId) {
+      setCodexPendingLoginId(payload.pendingLoginId);
+    }
     if (authUrl) {
-      const popup = window.open(authUrl, "_blank", "noopener,noreferrer");
-      if (!popup) {
-        alert("Popup blocked. Allow popups for this site and click Sign in to OpenAI again.");
-      }
+      window.open(authUrl, "_blank");
       return;
     }
     if (payload?.models?.length) {
@@ -566,6 +612,7 @@ function AdminAiAssistant() {
                             Open login URL
                           </a>
                         ) : null}
+                        {codexModelsQuery.data.callbackHint ? ` ${codexModelsQuery.data.callbackHint}` : ""}
                       </>
                     ) : codexModelsQuery.isError ? (
                       codexModelsQuery.error instanceof Error ? codexModelsQuery.error.message : "Failed to load models."
@@ -576,6 +623,32 @@ function AdminAiAssistant() {
                     )}
                   </div>
                 </div>
+                {codexModelsQuery.data?.loginRequired ? (
+                  <div className="rounded-md border border-slate-500/40 bg-slate-900/30 p-3 space-y-2">
+                    <div className="text-xs text-slate-200">
+                      After OpenAI login, if you land on a localhost error page, copy the full URL from that browser tab and paste it here.
+                    </div>
+                    <input
+                      className="input-field"
+                      placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+                      value={codexCallbackDraft}
+                      onChange={(e) => setCodexCallbackDraft(e.target.value)}
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => completeCodexLoginMutation.mutate()}
+                        disabled={completeCodexLoginMutation.isPending || !codexPendingLoginId.trim()}
+                      >
+                        {completeCodexLoginMutation.isPending ? "Completing login..." : "Complete login"}
+                      </button>
+                      {!codexPendingLoginId.trim() ? (
+                        <span className="text-xs text-slate-300">Start a fresh login first to create a pending session.</span>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <input className="input-field" placeholder="Model (e.g., gpt-4o-mini)" value={model} onChange={(e) => setModel(e.target.value)} />

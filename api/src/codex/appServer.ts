@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { accessSync, constants as fsConstants, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -8,6 +9,8 @@ import type { InvocationContext } from "@azure/functions";
 
 const DEFAULT_CODEX_RPC_TIMEOUT_MS = Number(process.env.CODEX_RPC_TIMEOUT_MS || 45000);
 const DEFAULT_CODEX_TURN_TIMEOUT_MS = Number(process.env.CODEX_TURN_TIMEOUT_MS || 180000);
+const DEFAULT_CODEX_LOGIN_TTL_MS = Number(process.env.CODEX_LOGIN_TTL_MS || 10 * 60 * 1000);
+const DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS = Number(process.env.CODEX_LOGIN_COMPLETE_TIMEOUT_MS || 30000);
 const STDERR_TAIL_MAX = 2000;
 const DEFAULT_CODEX_HOME_TMP_DIR = "ntechr-codex-home";
 const DEFAULT_CODEX_HOME_AZURE_DIR = "/home/site/.codex";
@@ -62,6 +65,30 @@ export type ListCodexModelsOptions = {
   context?: InvocationContext;
 };
 
+export type StartCodexLoginRelayOptions = {
+  ownerId: string;
+  codexPath: string;
+  codexHome?: string;
+  requestTimeoutMs?: number;
+  context?: InvocationContext;
+};
+
+export type StartedCodexLoginRelay = {
+  loginKey: string;
+  loginId?: string;
+  authUrl: string;
+  callbackUrl: string;
+  expiresAt: number;
+};
+
+export type CompleteCodexLoginRelayOptions = {
+  ownerId: string;
+  loginKey: string;
+  callbackUrlOrQuery: string;
+  completionTimeoutMs?: number;
+  context?: InvocationContext;
+};
+
 type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -76,7 +103,19 @@ type CodexLaunchSpec = {
   source: "explicit" | "bundled" | "path";
 };
 
+type PendingCodexLogin = {
+  ownerId: string;
+  loginKey: string;
+  loginId?: string;
+  authUrl: string;
+  callbackUrl: string;
+  expiresAt: number;
+  session: CodexAppServerSession;
+  completion: Promise<void>;
+};
+
 const requireFromHere = createRequire(import.meta.url);
+const pendingCodexLogins = new Map<string, PendingCodexLogin>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -209,6 +248,67 @@ function resolveCodexLaunchSpec(requestedPath: string): CodexLaunchSpec {
     label: normalized,
     source: "explicit",
   };
+}
+
+function pendingLoginMapKey(ownerId: string, loginKey: string) {
+  return `${ownerId}::${loginKey}`;
+}
+
+async function closePendingLogin(entry: PendingCodexLogin) {
+  try {
+    await entry.session.close();
+  } catch {
+    // Best-effort close.
+  }
+}
+
+function cleanupExpiredPendingLogins(now = Date.now()) {
+  for (const [key, entry] of pendingCodexLogins) {
+    if (entry.expiresAt > now) continue;
+    pendingCodexLogins.delete(key);
+    void closePendingLogin(entry);
+  }
+}
+
+async function clearPendingLoginsForOwner(ownerId: string) {
+  const keys: string[] = [];
+  for (const [key, entry] of pendingCodexLogins) {
+    if (entry.ownerId !== ownerId) continue;
+    keys.push(key);
+  }
+  for (const key of keys) {
+    const entry = pendingCodexLogins.get(key);
+    if (!entry) continue;
+    pendingCodexLogins.delete(key);
+    await closePendingLogin(entry);
+  }
+}
+
+function parseCallbackParams(callbackUrlOrQuery: string): URLSearchParams {
+  const trimmed = callbackUrlOrQuery.trim();
+  if (!trimmed) return new URLSearchParams();
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.searchParams;
+  } catch {
+    const normalized = trimmed.startsWith("?") ? trimmed.slice(1) : trimmed;
+    return new URLSearchParams(normalized);
+  }
+}
+
+async function waitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return promise;
+  }
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+    });
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function parseStringArray(value: unknown): string[] {
@@ -503,6 +603,38 @@ class CodexAppServerSession {
     throw new Error("Codex authentication is required. Log in with ChatGPT and retry.");
   }
 
+  async startChatgptLoginIfRequired(): Promise<
+    | { status: "authenticated" }
+    | { status: "login_required"; authUrl: string; loginId?: string; callbackUrl: string }
+  > {
+    const accountRead = await this.request("account/read", { refreshToken: false });
+    const accountPayload = isRecord(accountRead) ? accountRead : {};
+    const account = isRecord(accountPayload.account) ? accountPayload.account : null;
+    const requiresAuth = Boolean(accountPayload.requiresOpenaiAuth);
+    const accountType = account && typeof account.type === "string" ? account.type : "";
+    if (accountType || !requiresAuth) {
+      return { status: "authenticated" };
+    }
+
+    const loginResult = await this.request("account/login/start", { type: "chatgpt" });
+    const loginPayload = isRecord(loginResult) ? loginResult : {};
+    const authUrl = typeof loginPayload.authUrl === "string" ? loginPayload.authUrl.trim() : "";
+    const loginId = typeof loginPayload.loginId === "string" ? loginPayload.loginId : undefined;
+    if (!authUrl) {
+      throw new Error("Codex login/start did not return authUrl.");
+    }
+    let callbackUrl = "";
+    try {
+      callbackUrl = new URL(authUrl).searchParams.get("redirect_uri") || "";
+    } catch {
+      callbackUrl = "";
+    }
+    if (!callbackUrl) {
+      throw new Error("Codex login/start returned authUrl without redirect_uri.");
+    }
+    return { status: "login_required", authUrl, loginId, callbackUrl };
+  }
+
   async listModels(includeHidden = false): Promise<CodexModelSummary[]> {
     const allModels: CodexModelSummary[] = [];
     const seen = new Set<string>();
@@ -711,6 +843,167 @@ export async function runCodexChat(options: RunCodexChatOptions): Promise<CodexC
 
 export function buildCodexTurnInput(messages: Array<{ role: "user" | "assistant"; content: string }>) {
   return buildInputText(messages);
+}
+
+export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions): Promise<StartedCodexLoginRelay | null> {
+  cleanupExpiredPendingLogins();
+  const ownerId = options.ownerId.trim();
+  if (!ownerId) {
+    throw new Error("ownerId is required for Codex login relay.");
+  }
+
+  await clearPendingLoginsForOwner(ownerId);
+
+  const requestTimeoutMs = Number.isFinite(options.requestTimeoutMs) ? Number(options.requestTimeoutMs) : DEFAULT_CODEX_RPC_TIMEOUT_MS;
+  const session = new CodexAppServerSession(
+    {
+      codexPath: options.codexPath,
+      codexHome: options.codexHome,
+      model: "gpt-5.1-codex",
+      developerInstructions: "",
+      inputText: "",
+      context: options.context,
+    },
+    requestTimeoutMs,
+  );
+
+  try {
+    await session.initialize();
+    const loginStatus = await session.startChatgptLoginIfRequired();
+    if (loginStatus.status === "authenticated") {
+      await session.close();
+      return null;
+    }
+
+    const loginKey = randomUUID();
+    const expiresAt = Date.now() + DEFAULT_CODEX_LOGIN_TTL_MS;
+    let settled = false;
+    let resolveCompletion: (() => void) | null = null;
+    let rejectCompletion: ((error: Error) => void) | null = null;
+    const completionPromise = new Promise<void>((resolve, reject) => {
+      resolveCompletion = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      rejectCompletion = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
+    });
+
+    const loginId = loginStatus.loginId;
+    const stopListening = session.onNotification((method, params) => {
+      if (!isRecord(params)) return;
+      if (method === "account/login/completed") {
+        const eventLoginId = typeof params.loginId === "string" ? params.loginId : undefined;
+        if (loginId && eventLoginId && eventLoginId !== loginId) return;
+        const success = Boolean(params.success);
+        if (success) {
+          resolveCompletion?.();
+          return;
+        }
+        const errorText = typeof params.error === "string" && params.error.trim() ? params.error.trim() : "Codex login failed.";
+        rejectCompletion?.(new Error(errorText));
+        return;
+      }
+      if (method === "account/updated") {
+        const authMode = typeof params.authMode === "string" ? params.authMode : "";
+        if (authMode === "chatgpt") {
+          resolveCompletion?.();
+        }
+      }
+    });
+
+    const completion = completionPromise.finally(() => {
+      stopListening();
+    });
+    const pending: PendingCodexLogin = {
+      ownerId,
+      loginKey,
+      loginId,
+      authUrl: loginStatus.authUrl,
+      callbackUrl: loginStatus.callbackUrl,
+      expiresAt,
+      session,
+      completion,
+    };
+    pendingCodexLogins.set(pendingLoginMapKey(ownerId, loginKey), pending);
+
+    return {
+      loginKey,
+      loginId,
+      authUrl: loginStatus.authUrl,
+      callbackUrl: loginStatus.callbackUrl,
+      expiresAt,
+    };
+  } catch (error) {
+    await session.close();
+    throw error;
+  }
+}
+
+export async function completeCodexLoginRelay(options: CompleteCodexLoginRelayOptions) {
+  cleanupExpiredPendingLogins();
+  const ownerId = options.ownerId.trim();
+  const loginKey = options.loginKey.trim();
+  if (!ownerId || !loginKey) {
+    throw new Error("ownerId and loginKey are required for Codex login relay completion.");
+  }
+
+  const mapKey = pendingLoginMapKey(ownerId, loginKey);
+  const pending = pendingCodexLogins.get(mapKey);
+  if (!pending) {
+    throw new Error("No pending Codex login session found. Start login again.");
+  }
+  if (pending.expiresAt <= Date.now()) {
+    pendingCodexLogins.delete(mapKey);
+    await closePendingLogin(pending);
+    throw new Error("Pending Codex login session expired. Start login again.");
+  }
+
+  const callbackParams = parseCallbackParams(options.callbackUrlOrQuery);
+  if (!callbackParams.get("code")) {
+    throw new Error("Missing authorization code. Paste the full localhost callback URL after login.");
+  }
+  if (!callbackParams.get("state")) {
+    throw new Error("Missing state parameter. Paste the full localhost callback URL after login.");
+  }
+
+  const relayCallback = new URL(pending.callbackUrl);
+  for (const key of Array.from(relayCallback.searchParams.keys())) {
+    relayCallback.searchParams.delete(key);
+  }
+  for (const [key, value] of callbackParams.entries()) {
+    relayCallback.searchParams.set(key, value);
+  }
+
+  try {
+    const forwarded = await fetch(relayCallback.toString(), {
+      method: "GET",
+      redirect: "manual",
+    });
+    if (forwarded.status >= 400) {
+      throw new Error(`Codex callback relay failed with status ${forwarded.status}.`);
+    }
+
+    const completionTimeoutMs = Number.isFinite(options.completionTimeoutMs)
+      ? Number(options.completionTimeoutMs)
+      : DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS;
+    await waitWithTimeout(
+      pending.completion,
+      completionTimeoutMs,
+      "Timed out waiting for Codex login completion. Try again and repaste the callback URL.",
+    );
+  } catch (error) {
+    pendingCodexLogins.delete(mapKey);
+    await closePendingLogin(pending);
+    throw error;
+  }
+
+  pendingCodexLogins.delete(mapKey);
+  await closePendingLogin(pending);
 }
 
 export async function listCodexModels(options: ListCodexModelsOptions): Promise<CodexModelSummary[]> {
