@@ -1,12 +1,36 @@
 import { app, type HttpRequest, type HttpResponseInit, type InvocationContext } from "@azure/functions";
 import { z } from "zod";
 import { ensureAdmin, getClientPrincipal } from "../auth.js";
-import { completeCodexLoginRelay } from "../codex/appServer.js";
+import { completeCodexLoginRelay, completeCodexLoginViaCallback } from "../codex/appServer.js";
+import { database } from "../client.js";
+import { containers } from "../cosmos.js";
+import { siteConfigSchema } from "../types/content.js";
 
 const requestSchema = z.object({
-  loginId: z.string().min(1),
+  loginId: z.string().min(1).optional(),
   callbackUrl: z.string().min(1),
+  codexPath: z.string().optional(),
+  codexHome: z.string().optional(),
 });
+
+async function getStoredCodexSettings() {
+  try {
+    const container = database.container(containers.config);
+    const id = "global";
+    const { resource } = await container.item(id, id).read();
+    const parsed = siteConfigSchema.safeParse(resource || {});
+    if (!parsed.success) {
+      return {};
+    }
+    const openai = parsed.data.ai?.adminAssistant?.openai;
+    return {
+      codexPath: typeof openai?.codexPath === "string" ? openai.codexPath : undefined,
+      codexHome: typeof openai?.codexHome === "string" ? openai.codexHome : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
 
 async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   const auth = ensureAdmin(req);
@@ -25,22 +49,53 @@ async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext
     return { status: 400, body: JSON.stringify(parsed.error.flatten()) };
   }
 
+  const stored = await getStoredCodexSettings();
+  const finalCodexPath = (parsed.data.codexPath || stored.codexPath || process.env.CODEX_PATH || "codex").trim();
+  const finalCodexHome = (parsed.data.codexHome || stored.codexHome || process.env.CODEX_HOME || "").trim() || undefined;
+  const loginId = (parsed.data.loginId || "").trim();
+  let relayErrorMessage = "";
+
+  if (loginId) {
+    try {
+      await completeCodexLoginRelay({
+        ownerId: principal.userId,
+        loginKey: loginId,
+        callbackUrlOrQuery: parsed.data.callbackUrl,
+        context,
+      });
+      return {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ success: true, mode: "relay" }),
+      };
+    } catch (error) {
+      relayErrorMessage = error instanceof Error ? error.message : String(error);
+      context.log(`ai-codex-login-complete relay failed: ${relayErrorMessage}`);
+    }
+  }
+
   try {
-    await completeCodexLoginRelay({
-      ownerId: principal.userId,
-      loginKey: parsed.data.loginId,
+    await completeCodexLoginViaCallback({
       callbackUrlOrQuery: parsed.data.callbackUrl,
+      codexPath: finalCodexPath,
+      codexHome: finalCodexHome,
       context,
     });
     return {
       status: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ success: true }),
+      body: JSON.stringify({ success: true, mode: "fallback" }),
     };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    context.log(`ai-codex-login-complete failed: ${message}`);
-    return { status: 400, body: message };
+  } catch (fallbackError) {
+    const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+    context.log(`ai-codex-login-complete fallback failed: ${fallbackMessage}`);
+    if (relayErrorMessage) {
+      return {
+        status: 400,
+        body: `Codex relay completion failed: ${relayErrorMessage}\nFallback completion failed: ${fallbackMessage}`,
+      };
+    }
+    return { status: 400, body: fallbackMessage };
   }
 }
 
@@ -49,4 +104,3 @@ app.http("ai-codex-login-complete", {
   route: "ai/codex-login/complete",
   handler: aiCodexLoginComplete,
 });
-

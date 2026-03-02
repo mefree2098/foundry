@@ -210,6 +210,7 @@ Implement a dedicated API endpoint, for example:
   - `includeHidden`
   - `startLogin` (explicitly starts a pending login relay session)
 - `POST /api/ai/codex-login/complete` for pasted localhost callback URL relay
+  - `loginId` should be optional in request payload; use it when available for in-memory relay, but support callback-only completion when missing/stale
 
 Return a simple UI-ready shape:
 
@@ -265,8 +266,16 @@ For hosted web apps, add explicit localhost-callback completion UX:
 1. Start login and store a short-lived pending login session server-side (same process instance).
 2. If browser lands on `http://localhost:.../auth/callback` and fails, tell the user to copy that full URL.
 3. Provide a `Complete login` action that posts the pasted URL back to your backend.
-4. Backend forwards `code/state` to the Codex local callback URL and waits for `account/login/completed`.
-5. Refresh model list after completion.
+4. Do not require pending login id on the client; allow callback-only completion attempts.
+5. Backend should try relay completion first when pending id exists:
+   - forward `code/state` to the pending session callback URL
+   - wait for `account/login/completed`
+6. If relay completion fails, fallback to callback-only completion:
+   - direct localhost callback forward + auth verification via `account/read`
+   - replay fallback: start a fresh Codex login listener and replay pasted callback params into that listener
+7. Keep pending session alive on recoverable callback errors (for example callback HTTP 400 or completion timeout) so users can retry without restarting login.
+8. If owner matching fails for pending login lookup, allow login-key fallback lookup (UUID is unguessable and avoids false mismatches).
+9. Refresh model list after completion.
 
 Recommended copy in Codex mode:
 
@@ -325,6 +334,7 @@ Hosted deployment reminder:
 - You must ensure the server can execute Codex (bundle/install runtime) and set `CODEX_PATH` only when overriding defaults.
 - For Azure-hosted Linux apps, use a writable persistent location for `CODEX_HOME` (for example under `/home/...`), otherwise login state may not persist.
 - If you implement localhost callback relay, keep the pending login process alive long enough for callback completion and use a short TTL + cleanup.
+- If a completion attempt fails with callback status `400`, do not immediately destroy pending session state; this frequently represents a retryable copy/paste mismatch.
 
 ---
 

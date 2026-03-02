@@ -439,7 +439,7 @@ export const fetchCodexModels = (params?: { codexPath?: string; codexHome?: stri
   return getJson<CodexModelsResponse>(`/ai/codex-models${suffix}`);
 };
 
-export const completeCodexLogin = (payload: { loginId: string; callbackUrl: string }) =>
+export const completeCodexLogin = (payload: { loginId?: string; callbackUrl: string; codexPath?: string; codexHome?: string }) =>
   sendJson<{ success: boolean }>("/ai/codex-login/complete", "POST", payload);
 
 export const aiChat = (payload: {

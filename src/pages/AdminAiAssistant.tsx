@@ -300,13 +300,15 @@ function AdminAiAssistant() {
     mutationFn: async () => {
       const loginId = codexPendingLoginId.trim();
       const callbackUrl = codexCallbackDraft.trim();
-      if (!loginId) {
-        throw new Error("No pending login session found. Click Sign in to OpenAI first.");
-      }
       if (!callbackUrl) {
         throw new Error("Paste the localhost callback URL from your browser first.");
       }
-      await completeCodexLogin({ loginId, callbackUrl });
+      await completeCodexLogin({
+        loginId: loginId || undefined,
+        callbackUrl,
+        codexPath: codexPathDraft.trim() || undefined,
+        codexHome: codexHomeDraft.trim() || undefined,
+      });
     },
     onSuccess: async () => {
       setCodexCallbackDraft("");
@@ -639,13 +641,11 @@ function AdminAiAssistant() {
                         type="button"
                         className="btn btn-primary"
                         onClick={() => completeCodexLoginMutation.mutate()}
-                        disabled={completeCodexLoginMutation.isPending || !codexPendingLoginId.trim()}
+                        disabled={completeCodexLoginMutation.isPending || !codexCallbackDraft.trim()}
                       >
                         {completeCodexLoginMutation.isPending ? "Completing login..." : "Complete login"}
                       </button>
-                      {!codexPendingLoginId.trim() ? (
-                        <span className="text-xs text-slate-300">Start a fresh login first to create a pending session.</span>
-                      ) : null}
+                      {!codexPendingLoginId.trim() ? <span className="text-xs text-slate-300">No pending id detected; callback-only completion will be attempted.</span> : null}
                     </div>
                   </div>
                 ) : null}

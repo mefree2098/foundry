@@ -89,6 +89,15 @@ export type CompleteCodexLoginRelayOptions = {
   context?: InvocationContext;
 };
 
+export type CompleteCodexLoginViaCallbackOptions = {
+  callbackUrlOrQuery: string;
+  codexPath: string;
+  codexHome?: string;
+  requestTimeoutMs?: number;
+  waitForAuthMs?: number;
+  context?: InvocationContext;
+};
+
 type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -254,6 +263,24 @@ function pendingLoginMapKey(ownerId: string, loginKey: string) {
   return `${ownerId}::${loginKey}`;
 }
 
+function findPendingLogin(loginKey: string, ownerId?: string) {
+  const trimmedLoginKey = loginKey.trim();
+  if (!trimmedLoginKey) return null;
+  const trimmedOwner = (ownerId || "").trim();
+  if (trimmedOwner) {
+    const exactKey = pendingLoginMapKey(trimmedOwner, trimmedLoginKey);
+    const exact = pendingCodexLogins.get(exactKey);
+    if (exact) {
+      return { mapKey: exactKey, pending: exact, ownerMatched: true };
+    }
+  }
+  for (const [mapKey, pending] of pendingCodexLogins) {
+    if (pending.loginKey !== trimmedLoginKey) continue;
+    return { mapKey, pending, ownerMatched: trimmedOwner ? pending.ownerId === trimmedOwner : false };
+  }
+  return null;
+}
+
 async function closePendingLogin(entry: PendingCodexLogin) {
   try {
     await entry.session.close();
@@ -296,6 +323,31 @@ function parseCallbackParams(callbackUrlOrQuery: string): URLSearchParams {
   }
 }
 
+function parseCallbackUrl(callbackUrlOrQuery: string): URL {
+  const trimmed = callbackUrlOrQuery.trim();
+  if (!trimmed) {
+    throw new Error("Missing callback URL.");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    const asQuery = new URLSearchParams(trimmed.startsWith("?") ? trimmed.slice(1) : trimmed);
+    const code = asQuery.get("code");
+    const state = asQuery.get("state");
+    if (!code || !state) {
+      throw new Error("Missing authorization code/state. Paste the full localhost callback URL.");
+    }
+    parsed = new URL("http://localhost/auth/callback");
+    parsed.search = asQuery.toString();
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1" && hostname !== "[::1]") {
+    throw new Error("Callback URL must point to localhost.");
+  }
+  return parsed;
+}
+
 async function waitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return promise;
@@ -309,6 +361,13 @@ async function waitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeou
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function hasCodexAccount(payload: unknown) {
+  if (!isRecord(payload)) return false;
+  const account = isRecord(payload.account) ? payload.account : null;
+  const accountType = account && typeof account.type === "string" ? account.type : "";
+  return Boolean(accountType);
 }
 
 function parseStringArray(value: unknown): string[] {
@@ -952,10 +1011,13 @@ export async function completeCodexLoginRelay(options: CompleteCodexLoginRelayOp
     throw new Error("ownerId and loginKey are required for Codex login relay completion.");
   }
 
-  const mapKey = pendingLoginMapKey(ownerId, loginKey);
-  const pending = pendingCodexLogins.get(mapKey);
-  if (!pending) {
+  const found = findPendingLogin(loginKey, ownerId);
+  if (!found) {
     throw new Error("No pending Codex login session found. Start login again.");
+  }
+  const { mapKey, pending } = found;
+  if (!found.ownerMatched) {
+    options.context?.log(`Codex login relay owner mismatch for loginKey=${loginKey}; completing via matching pending session.`);
   }
   if (pending.expiresAt <= Date.now()) {
     pendingCodexLogins.delete(mapKey);
@@ -997,13 +1059,139 @@ export async function completeCodexLoginRelay(options: CompleteCodexLoginRelayOp
       "Timed out waiting for Codex login completion. Try again and repaste the callback URL.",
     );
   } catch (error) {
-    pendingCodexLogins.delete(mapKey);
-    await closePendingLogin(pending);
+    const message = toErrorMessage(error).toLowerCase();
+    const keepPending =
+      message.includes("status 400") ||
+      message.includes("timed out waiting for codex login completion") ||
+      message.includes("missing authorization code") ||
+      message.includes("missing state parameter");
+    if (!keepPending) {
+      pendingCodexLogins.delete(mapKey);
+      await closePendingLogin(pending);
+    }
     throw error;
   }
 
   pendingCodexLogins.delete(mapKey);
   await closePendingLogin(pending);
+}
+
+async function checkCodexAuthenticated(options: { codexPath: string; codexHome?: string; requestTimeoutMs?: number; context?: InvocationContext }) {
+  const requestTimeoutMs = Number.isFinite(options.requestTimeoutMs) ? Number(options.requestTimeoutMs) : DEFAULT_CODEX_RPC_TIMEOUT_MS;
+  const session = new CodexAppServerSession(
+    {
+      codexPath: options.codexPath,
+      codexHome: options.codexHome,
+      model: "gpt-5.1-codex",
+      developerInstructions: "",
+      inputText: "",
+      context: options.context,
+    },
+    requestTimeoutMs,
+  );
+  try {
+    await session.initialize();
+    const result = await session.request("account/read", { refreshToken: false });
+    return hasCodexAccount(result);
+  } finally {
+    await session.close();
+  }
+}
+
+async function waitForSessionAuthenticated(session: CodexAppServerSession, waitForAuthMs: number) {
+  const deadline = Date.now() + Math.max(500, waitForAuthMs);
+  for (;;) {
+    const accountRead = await session.request("account/read", { refreshToken: false });
+    if (hasCodexAccount(accountRead)) return true;
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  return false;
+}
+
+export async function completeCodexLoginViaCallback(options: CompleteCodexLoginViaCallbackOptions) {
+  const callbackUrl = parseCallbackUrl(options.callbackUrlOrQuery);
+  const params = parseCallbackParams(callbackUrl.toString());
+  if (!params.get("code")) {
+    throw new Error("Missing authorization code. Paste the full localhost callback URL after login.");
+  }
+  if (!params.get("state")) {
+    throw new Error("Missing state parameter. Paste the full localhost callback URL after login.");
+  }
+
+  const waitForAuthMs = Number.isFinite(options.waitForAuthMs) ? Number(options.waitForAuthMs) : 7000;
+  let directError = "";
+  try {
+    const forwarded = await fetch(callbackUrl.toString(), {
+      method: "GET",
+      redirect: "manual",
+    });
+    if (forwarded.status >= 400) {
+      throw new Error(`Codex callback relay failed with status ${forwarded.status}.`);
+    }
+    const deadline = Date.now() + Math.max(500, waitForAuthMs);
+    for (;;) {
+      const ok = await checkCodexAuthenticated({
+        codexPath: options.codexPath,
+        codexHome: options.codexHome,
+        requestTimeoutMs: options.requestTimeoutMs,
+        context: options.context,
+      });
+      if (ok) return;
+      if (Date.now() >= deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    directError = "Codex callback was forwarded, but authentication did not complete in time.";
+  } catch (error) {
+    directError =
+      `Unable to reach Codex localhost callback (${callbackUrl.host}) directly. ` +
+      `If this is hosted, start/complete may have hit different server workers. Original error: ${toErrorMessage(error)}`;
+  }
+
+  let replayError = "";
+  const requestTimeoutMs = Number.isFinite(options.requestTimeoutMs) ? Number(options.requestTimeoutMs) : DEFAULT_CODEX_RPC_TIMEOUT_MS;
+  const replaySession = new CodexAppServerSession(
+    {
+      codexPath: options.codexPath,
+      codexHome: options.codexHome,
+      model: "gpt-5.1-codex",
+      developerInstructions: "",
+      inputText: "",
+      context: options.context,
+    },
+    requestTimeoutMs,
+  );
+  try {
+    await replaySession.initialize();
+    const loginStatus = await replaySession.startChatgptLoginIfRequired();
+    if (loginStatus.status === "authenticated") {
+      return;
+    }
+    const relayCallback = new URL(loginStatus.callbackUrl);
+    for (const key of Array.from(relayCallback.searchParams.keys())) {
+      relayCallback.searchParams.delete(key);
+    }
+    for (const [key, value] of params.entries()) {
+      relayCallback.searchParams.set(key, value);
+    }
+    const forwarded = await fetch(relayCallback.toString(), {
+      method: "GET",
+      redirect: "manual",
+    });
+    if (forwarded.status >= 400) {
+      throw new Error(`Codex callback replay failed with status ${forwarded.status}.`);
+    }
+    const ok = await waitForSessionAuthenticated(replaySession, waitForAuthMs);
+    if (ok) return;
+    replayError = "Codex callback replay succeeded, but authentication did not complete in time.";
+  } catch (error) {
+    replayError = toErrorMessage(error);
+  } finally {
+    await replaySession.close();
+  }
+
+  const details = [directError, replayError].filter(Boolean).join(" Replay attempt: ");
+  throw new Error(`Unable to complete Codex login from callback URL. ${details}`);
 }
 
 export async function listCodexModels(options: ListCodexModelsOptions): Promise<CodexModelSummary[]> {
