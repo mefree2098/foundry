@@ -277,6 +277,22 @@ function AdminAiAssistant() {
     config?.ai?.adminAssistant?.openai?.hasCodexPath || (config?.ai?.adminAssistant?.openai?.codexPath || "").trim(),
   );
   const configuredAuthMode: OpenAiAuthMode = config?.ai?.adminAssistant?.openai?.authMode === "codexPath" ? "codexPath" : "apiKey";
+  const authModeSaved = authMode === configuredAuthMode;
+
+  const openCodexLogin = async () => {
+    const result = await codexModelsQuery.refetch();
+    const payload = result.data;
+    const authUrl = payload?.loginRequired ? payload.authUrl : undefined;
+    if (authUrl) {
+      window.open(authUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (payload?.models?.length) {
+      alert("Codex is already connected to OpenAI.");
+      return;
+    }
+    alert("Unable to start Codex login right now. Check Codex path/home and try again.");
+  };
 
   const saveOpenAiSettings = useMutation({
     mutationFn: async () => {
@@ -456,13 +472,14 @@ function AdminAiAssistant() {
             <div>
               <div className="text-xs text-slate-300">OpenAI settings</div>
               <div className="text-xs text-slate-400">
-                {configuredAuthMode === "apiKey"
+                {authMode === "apiKey"
                   ? hasStoredKey
                     ? "Auth mode: API key. Key is saved (hidden)."
                     : "Auth mode: API key. No API key saved yet."
                   : hasStoredCodexPath
                     ? "Auth mode: Codex subscription. Codex path is saved."
                     : "Auth mode: Codex subscription. Using PATH lookup unless you set a codex path."}{" "}
+                {!authModeSaved ? "Not saved yet. " : ""}
                 Leave API key blank to keep the stored key.
               </div>
             </div>
@@ -516,6 +533,14 @@ function AdminAiAssistant() {
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
+                    className="btn btn-primary"
+                    onClick={openCodexLogin}
+                    disabled={codexModelsQuery.isFetching}
+                  >
+                    {codexModelsQuery.isFetching ? "Checking login..." : "Sign in to OpenAI"}
+                  </button>
+                  <button
+                    type="button"
                     className="btn btn-secondary"
                     onClick={() => codexModelsQuery.refetch()}
                     disabled={codexModelsQuery.isFetching}
@@ -525,7 +550,7 @@ function AdminAiAssistant() {
                   <div className="text-xs text-slate-300">
                     {codexModelsQuery.data?.loginRequired ? (
                       <>
-                        ChatGPT login required for Codex.{" "}
+                        OpenAI login required for Codex.{" "}
                         {codexModelsQuery.data.authUrl ? (
                           <a className="underline text-slate-200" href={codexModelsQuery.data.authUrl} target="_blank" rel="noreferrer">
                             Open login URL
