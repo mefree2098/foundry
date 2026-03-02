@@ -44,6 +44,7 @@ import "./http/business-reports.js";
 import "./http/business-import-sources.js";
 import "./http/business-import-jobs.js";
 import "./http/business-import-job-item.js";
+import "./http/business-integrations.js";
 import "./http/business-ai-chat.js";
 import "./http/business-ai-apply.js";
 import "./http/business-invariants-check.js";

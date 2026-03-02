@@ -1,22 +1,45 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import BusinessSection from "./BusinessSection";
-import { fetchBusinessImportJobs, fetchBusinessImportSources, runBusinessImportJob, saveBusinessImportSource } from "../../lib/api";
+import { fetchBusinessImportJobs, fetchBusinessImportSources, fetchBusinessIntegrations, runBusinessImportJob, saveBusinessImportSource } from "../../lib/api";
+import type { BusinessImportSource, BusinessIntegration } from "../../lib/businessSchemas";
+
+const sourceProviderRequirements: Partial<Record<BusinessImportSource["type"], BusinessIntegration["provider"]>> = {
+  steam: "steam",
+  apple: "apple",
+  googleplay: "googleplay",
+  distrokid: "distrokid",
+  "bank-ofx": "mountain-america-ofx",
+};
 
 function ImportsPage() {
   const queryClient = useQueryClient();
   const { data: sources = [], isLoading: loadingSources } = useQuery({ queryKey: ["business", "imports", "sources"], queryFn: fetchBusinessImportSources });
   const { data: jobPage, isLoading: loadingJobs } = useQuery({ queryKey: ["business", "imports", "jobs"], queryFn: () => fetchBusinessImportJobs({ limit: 100 }) });
+  const { data: integrations = [], isLoading: loadingIntegrations } = useQuery({ queryKey: ["business", "integrations"], queryFn: fetchBusinessIntegrations });
+
   const jobs = jobPage?.items || [];
 
-  const [sourceType, setSourceType] = useState<"steam" | "apple" | "googleplay" | "distrokid" | "bank-csv" | "bank-ofx" | "manual">("manual");
+  const [sourceType, setSourceType] = useState<BusinessImportSource["type"]>("manual");
   const [schedule, setSchedule] = useState("");
   const [selectedSourceId, setSelectedSourceId] = useState("");
+  const [selectedIntegrationId, setSelectedIntegrationId] = useState("");
+
+  const requiredProvider = sourceProviderRequirements[sourceType];
+  const eligibleIntegrations = useMemo(
+    () =>
+      integrations.filter((integration) => {
+        if (!requiredProvider) return false;
+        return integration.provider === requiredProvider && integration.state === "active";
+      }),
+    [integrations, requiredProvider],
+  );
 
   const saveSource = useMutation({
     mutationFn: () =>
       saveBusinessImportSource({
         type: sourceType,
+        integrationId: requiredProvider ? selectedIntegrationId || undefined : undefined,
         schedule: schedule.trim() || undefined,
         state: "active",
       }),
@@ -36,13 +59,19 @@ function ImportsPage() {
     },
   });
 
+  const requiresIntegration = Boolean(requiredProvider);
+  const canAddSource = saveSource.status !== "pending" && (!requiresIntegration || Boolean(selectedIntegrationId));
+
   return (
     <BusinessSection
       title="Imports"
-      summary="Run and monitor Steam, Apple, Google Play, DistroKid, and manual import jobs with idempotency keys."
+      summary="Run and monitor Steam, Apple, Google Play, DistroKid, and bank import jobs. Store integration credentials in the Integrations UI, then attach profiles to sources."
     >
-      <div className="grid gap-3 rounded-xl border border-white/10 bg-white/5 p-3 md:grid-cols-4">
-        <select className="input-field" value={sourceType} onChange={(e) => setSourceType(e.target.value as typeof sourceType)}>
+      <div className="grid gap-3 rounded-xl border border-white/10 bg-white/5 p-3 md:grid-cols-5">
+        <select className="input-field" value={sourceType} onChange={(e) => {
+          setSourceType(e.target.value as BusinessImportSource["type"]);
+          setSelectedIntegrationId("");
+        }}>
           <option value="manual">Manual</option>
           <option value="steam">Steam</option>
           <option value="apple">Apple</option>
@@ -51,11 +80,35 @@ function ImportsPage() {
           <option value="bank-csv">Bank CSV</option>
           <option value="bank-ofx">Bank OFX</option>
         </select>
-        <input className="input-field md:col-span-2" placeholder="Schedule (optional)" value={schedule} onChange={(e) => setSchedule(e.target.value)} />
-        <button className="btn btn-primary" type="button" disabled={saveSource.status === "pending"} onClick={() => void saveSource.mutateAsync()}>
+
+        {requiresIntegration ? (
+          <select className="input-field md:col-span-2" value={selectedIntegrationId} onChange={(e) => setSelectedIntegrationId(e.target.value)}>
+            <option value="">Select {requiredProvider} integration</option>
+            {eligibleIntegrations.map((integration) => (
+              <option key={integration.id} value={integration.id}>
+                {integration.displayName} ({integration.status})
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="input-field md:col-span-2 flex items-center text-xs text-slate-400">No integration required for this source type.</div>
+        )}
+
+        <input className="input-field md:col-span-1" placeholder="Schedule (optional)" value={schedule} onChange={(e) => setSchedule(e.target.value)} />
+        <button className="btn btn-primary" type="button" disabled={!canAddSource} onClick={() => void saveSource.mutateAsync()}>
           {saveSource.status === "pending" ? "Saving..." : "Add source"}
         </button>
       </div>
+
+      {requiresIntegration && !loadingIntegrations && eligibleIntegrations.length === 0 ? (
+        <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+          No active <strong>{requiredProvider}</strong> integration is available. Configure one in
+          {" "}
+          <a href="/admin/business/integrations" className="underline decoration-amber-200/70 underline-offset-2">Integrations</a>
+          {" "}
+          and run Test connection first.
+        </div>
+      ) : null}
 
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-xl border border-white/10 bg-white/5 p-3">
@@ -69,6 +122,7 @@ function ImportsPage() {
                   <div className="text-slate-400">
                     {source.id} · {source.state}
                   </div>
+                  {source.integrationId ? <div className="text-slate-400">integration {source.integrationId}</div> : null}
                 </div>
                 <input type="radio" name="selected-source" checked={selectedSourceId === source.id} onChange={() => setSelectedSourceId(source.id)} />
               </label>

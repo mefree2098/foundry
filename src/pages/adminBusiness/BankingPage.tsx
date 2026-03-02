@@ -4,22 +4,44 @@ import BusinessSection from "./BusinessSection";
 import {
   fetchBusinessBankAccounts,
   fetchBusinessBankTransactions,
+  fetchBusinessIntegrations,
   importBusinessBankTransactions,
   saveBusinessBankAccount,
 } from "../../lib/api";
 import { formatMinor } from "../../lib/businessUi";
+import type { BusinessBankAccount, BusinessIntegration } from "../../lib/businessSchemas";
+
+const feedProviderMap: Record<BusinessBankAccount["feedType"], BusinessIntegration["provider"] | null> = {
+  manual: null,
+  plaid: "plaid",
+  ofx: "mountain-america-ofx",
+};
 
 function BankingPage() {
   const queryClient = useQueryClient();
   const { data: accounts = [], isLoading: loadingAccounts } = useQuery({ queryKey: ["business", "bank", "accounts"], queryFn: fetchBusinessBankAccounts });
   const { data: txPage, isLoading: loadingTx } = useQuery({ queryKey: ["business", "bank", "transactions"], queryFn: () => fetchBusinessBankTransactions({ limit: 100 }) });
+  const { data: integrations = [] } = useQuery({ queryKey: ["business", "integrations"], queryFn: fetchBusinessIntegrations });
+
   const transactions = txPage?.items || [];
 
   const [accountName, setAccountName] = useState("");
   const [institution, setInstitution] = useState("");
   const [currency, setCurrency] = useState("USD");
+  const [feedType, setFeedType] = useState<BusinessBankAccount["feedType"]>("manual");
+  const [integrationId, setIntegrationId] = useState("");
   const [importAccountId, setImportAccountId] = useState("");
   const [importRowsText, setImportRowsText] = useState("2026-01-15,Steam payout,120000\n2026-01-16,Bank fee,-350");
+
+  const requiredProvider = feedProviderMap[feedType];
+  const eligibleIntegrations = useMemo(
+    () =>
+      integrations.filter((integration) => {
+        if (!requiredProvider) return false;
+        return integration.provider === requiredProvider && integration.state === "active";
+      }),
+    [integrations, requiredProvider],
+  );
 
   const saveAccount = useMutation({
     mutationFn: () =>
@@ -27,7 +49,8 @@ function BankingPage() {
         displayName: accountName.trim(),
         institution: institution.trim() || undefined,
         currency: currency.trim().toUpperCase() || "USD",
-        feedType: "manual",
+        feedType,
+        integrationId: requiredProvider ? integrationId || undefined : undefined,
         connectionState: "connected",
       }),
     onSuccess: async () => {
@@ -35,6 +58,8 @@ function BankingPage() {
       await queryClient.invalidateQueries({ queryKey: ["business", "audit"] });
       setAccountName("");
       setInstitution("");
+      setFeedType("manual");
+      setIntegrationId("");
     },
   });
 
@@ -73,24 +98,59 @@ function BankingPage() {
     [accounts],
   );
 
+  const requiresIntegration = Boolean(requiredProvider);
+  const canSave = saveAccount.status !== "pending" && Boolean(accountName.trim()) && (!requiresIntegration || Boolean(integrationId));
+
   return (
     <BusinessSection
       title="Banking"
-      summary="Connect feeds or upload statements, then normalize, deduplicate, and prepare transactions for reconciliation."
+      summary="Configure manual, Plaid, or OFX bank feeds in UI. Mountain America Direct Connect credentials are managed in Integrations."
     >
-      <div className="grid gap-3 rounded-xl border border-white/10 bg-white/5 p-3 md:grid-cols-4">
+      <div className="grid gap-3 rounded-xl border border-white/10 bg-white/5 p-3 md:grid-cols-6">
         <input className="input-field" placeholder="Account name" value={accountName} onChange={(e) => setAccountName(e.target.value)} />
         <input className="input-field" placeholder="Institution" value={institution} onChange={(e) => setInstitution(e.target.value)} />
         <input className="input-field" placeholder="Currency" value={currency} onChange={(e) => setCurrency(e.target.value)} />
+        <select className="input-field" value={feedType} onChange={(e) => {
+          setFeedType(e.target.value as BusinessBankAccount["feedType"]);
+          setIntegrationId("");
+        }}>
+          <option value="manual">Manual</option>
+          <option value="plaid">Plaid</option>
+          <option value="ofx">OFX / Mountain America Direct</option>
+        </select>
+
+        {requiresIntegration ? (
+          <select className="input-field" value={integrationId} onChange={(e) => setIntegrationId(e.target.value)}>
+            <option value="">Select {requiredProvider} integration</option>
+            {eligibleIntegrations.map((integration) => (
+              <option key={integration.id} value={integration.id}>
+                {integration.displayName} ({integration.status})
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="input-field flex items-center text-xs text-slate-400">No integration profile required.</div>
+        )}
+
         <button
           className="btn btn-primary"
           type="button"
-          disabled={saveAccount.status === "pending" || !accountName.trim()}
+          disabled={!canSave}
           onClick={() => void saveAccount.mutateAsync()}
         >
           {saveAccount.status === "pending" ? "Saving..." : "Add account"}
         </button>
       </div>
+
+      {requiresIntegration && eligibleIntegrations.length === 0 ? (
+        <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+          Configure and test a {requiredProvider} connection in
+          {" "}
+          <a href="/admin/business/integrations" className="underline decoration-amber-200/70 underline-offset-2">Integrations</a>
+          {" "}
+          before adding this bank feed.
+        </div>
+      ) : null}
 
       <div className="grid gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
         <div className="text-xs uppercase tracking-wide text-slate-400">Manual transaction import</div>
@@ -131,6 +191,7 @@ function BankingPage() {
                 <div className="text-slate-400">
                   {account.id} · {account.currency} · {account.feedType} · {account.connectionState}
                 </div>
+                {account.integrationId ? <div className="text-slate-400">integration {account.integrationId}</div> : null}
               </div>
             ))}
             {!loadingAccounts && sortedAccounts.length === 0 ? <div className="text-sm text-slate-400">No bank accounts yet.</div> : null}

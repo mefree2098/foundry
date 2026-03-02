@@ -349,6 +349,7 @@ export const bankAccountSchema = z.object({
   mask: z.string().trim().min(1).optional(),
   currency: currencySchema,
   feedType: z.enum(["plaid", "ofx", "manual"]),
+  integrationId: entityIdSchema.optional(),
   connectionState: z.enum(["connected", "needs_reauth", "disabled"]),
   ledgerCashAccountId: entityIdSchema,
   lastSyncAt: isoDateTimeSchema.optional(),
@@ -364,6 +365,7 @@ export const bankAccountInputSchema = z
     mask: z.string().trim().min(1).optional(),
     currency: currencySchema.optional(),
     feedType: z.enum(["plaid", "ofx", "manual"]).optional(),
+    integrationId: entityIdSchema.optional(),
     connectionState: z.enum(["connected", "needs_reauth", "disabled"]).optional(),
     ledgerCashAccountId: entityIdSchema.optional(),
   })
@@ -419,6 +421,7 @@ export const importSourceSchema = z.object({
   id: entityIdSchema,
   pk: entityIdSchema,
   type: z.enum(["steam", "apple", "googleplay", "distrokid", "bank-csv", "bank-ofx", "manual"]),
+  integrationId: entityIdSchema.optional(),
   config: z.record(z.string(), z.unknown()).default({}),
   schedule: z.string().optional(),
   state: z.enum(["active", "disabled"]).default("active"),
@@ -431,9 +434,57 @@ export const importSourceInputSchema = z
   .object({
     id: entityIdSchema.optional(),
     type: z.enum(["steam", "apple", "googleplay", "distrokid", "bank-csv", "bank-ofx", "manual"]),
+    integrationId: entityIdSchema.optional(),
     config: z.record(z.string(), z.unknown()).optional(),
     schedule: z.string().optional(),
     state: z.enum(["active", "disabled"]).optional(),
+  })
+  .strict();
+
+export const integrationProviderSchema = z.enum(["plaid", "mountain-america-ofx", "steam", "apple", "googleplay", "distrokid"]);
+export const integrationStateSchema = z.enum(["active", "disabled"]);
+export const integrationStatusSchema = z.enum(["not_tested", "connected", "needs_attention", "disabled"]);
+
+export const integrationSecretEnvelopeSchema = z.object({
+  algorithm: z.literal("aes-256-gcm"),
+  keyId: z.string().trim().min(1),
+  iv: z.string().min(1),
+  authTag: z.string().min(1),
+  ciphertext: z.string().min(1),
+  updatedAt: isoDateTimeSchema,
+});
+
+export const integrationConnectionSchema = z.object({
+  id: entityIdSchema,
+  pk: entityIdSchema,
+  provider: integrationProviderSchema,
+  displayName: z.string().trim().min(1),
+  config: z.record(z.string(), z.unknown()).default({}),
+  state: integrationStateSchema.default("active"),
+  status: integrationStatusSchema.default("not_tested"),
+  statusMessage: z.string().trim().min(1).optional(),
+  lastTestedAt: isoDateTimeSchema.optional(),
+  secretMeta: z
+    .object({
+      keyCount: z.number().int().nonnegative().default(0),
+      keys: z.array(z.string().trim().min(1)).default([]),
+      updatedAt: isoDateTimeSchema.optional(),
+    })
+    .default({ keyCount: 0, keys: [] }),
+  secretEnvelope: integrationSecretEnvelopeSchema.optional(),
+  createdAt: isoDateTimeSchema,
+  updatedAt: isoDateTimeSchema,
+  updatedBy: z.string().trim().min(1).optional(),
+});
+
+export const integrationConnectionInputSchema = z
+  .object({
+    id: entityIdSchema.optional(),
+    provider: integrationProviderSchema,
+    displayName: z.string().trim().min(1),
+    config: z.record(z.string(), z.unknown()).optional(),
+    secrets: z.record(z.string(), z.string()).optional(),
+    state: integrationStateSchema.optional(),
   })
   .strict();
 
@@ -576,6 +627,7 @@ export type BankAccount = z.infer<typeof bankAccountSchema>;
 export type BankTransaction = z.infer<typeof bankTransactionSchema>;
 export type ImportSource = z.infer<typeof importSourceSchema>;
 export type ImportJob = z.infer<typeof importJobSchema>;
+export type IntegrationConnection = z.infer<typeof integrationConnectionSchema>;
 export type ReconcileRun = z.infer<typeof reconcileRunSchema>;
 export type BusinessAuditEvent = z.infer<typeof businessAuditEventSchema>;
 export type BusinessAiAction = z.infer<typeof businessAiActionSchema>;

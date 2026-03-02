@@ -1,5 +1,6 @@
 import { database } from "../client.js";
 import { containers } from "../cosmos.js";
+import { assertSourceIntegrationReady } from "./integrations.js";
 import { importJobRunInputSchema, importJobSchema, importSourceInputSchema, importSourceSchema, type ImportJob, type ImportSource } from "./schemas.js";
 import { makeEntityId, nowIso } from "./utils.js";
 
@@ -34,6 +35,7 @@ export async function upsertImportSource(payload: unknown): Promise<ImportSource
     id,
     pk: id,
     type: parsedInput.type,
+    integrationId: parsedInput.integrationId || (existing && existing.success ? existing.data.integrationId : undefined),
     config: parsedInput.config || (existing && existing.success ? existing.data.config : {}),
     schedule: parsedInput.schedule || (existing && existing.success ? existing.data.schedule : undefined),
     state: parsedInput.state || (existing && existing.success ? existing.data.state : "active"),
@@ -41,6 +43,7 @@ export async function upsertImportSource(payload: unknown): Promise<ImportSource
     updatedAt: nowIso(),
     lastRunAt: existing && existing.success ? existing.data.lastRunAt : undefined,
   });
+  await assertSourceIntegrationReady(source);
 
   await container.items.upsert(source);
   return source;
@@ -100,6 +103,7 @@ export async function runImportJob(payload: unknown): Promise<ImportJob> {
   if (!resources[0]) throw new Error(`Import source ${parsedInput.sourceId} not found`);
   const sourceParsed = importSourceSchema.safeParse(resources[0]);
   if (!sourceParsed.success) throw new Error(`Import source ${parsedInput.sourceId} is invalid`);
+  await assertSourceIntegrationReady(sourceParsed.data);
 
   const startedAt = nowIso();
   const id = makeEntityId("job");

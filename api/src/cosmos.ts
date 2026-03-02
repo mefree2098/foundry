@@ -15,6 +15,7 @@ export const containers = {
   businessJournalEntries: "business-journal-entries",
   businessImportJobs: "business-import-jobs",
   businessImportSources: "business-import-sources",
+  businessIntegrations: "business-integrations",
   businessImportArtifacts: "business-import-artifacts",
   businessReconcileRuns: "business-reconcile-runs",
   businessAuditEvents: "business-audit-events",
@@ -33,6 +34,7 @@ export const partitions = {
   businessBankTransactions: "/bankAccountId",
   businessJournalEntries: "/fiscalYear",
   businessImportSources: "/pk",
+  businessIntegrations: "/pk",
   businessImportJobs: "/pk",
   businessReconcileRuns: "/pk",
 };

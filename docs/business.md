@@ -9,17 +9,21 @@
 - Payments/status automation milestone: **complete**
 - Banking import/reconciliation milestone: **complete**
 - Marketplace imports milestone: **complete (adapter framework + source/job orchestration)**
+- UI-managed integrations milestone: **complete**
+- Auth UX polish milestone: **complete**
 - AI assistant platform milestone: **complete**
 - Verification/bug sweep milestone: **complete**
 
 ### Completed architecture and implementation
 - Frontend Business app delivered under `/admin/business/*` with production routes and pages:
-  - overview, invoices, customers, vendors, banking, imports, ledger, reconcile, reports, tax, settings, assistant
+  - overview, invoices, customers, vendors, banking, integrations, imports, ledger, reconcile, reports, tax, settings, assistant
+  - Business header now shows signed-in user identity and only displays login providers when unauthenticated
 - Frontend Business data layer delivered:
   - Expanded `src/lib/businessSchemas.ts` for all business entities
   - Expanded `src/lib/api.ts` with full Business endpoint coverage
   - Added Business UI utility helpers (`src/lib/businessUi.ts`)
   - Existing hooks retained and used for core config/customer/audit flows
+  - Auth hook expanded to expose `userDetails`, `identityProvider`, and authenticated state for UX gating
 - Backend Business domain modules delivered (`api/src/business/*`):
   - Defaults/config bootstrap and account map
   - Invoice math and deterministic totals
@@ -28,6 +32,7 @@
   - Payment posting + reversal service (payment/refund/writeoff)
   - Banking import + dedupe service
   - Reconciliation engine + status runs
+  - Integration profile vault and connection validator for Plaid, Mountain America OFX, Steam, Apple, Google Play, and DistroKid
   - Reporting engine (P&L, balance sheet, cash flow, AR aging, sales by customer, trial balance)
   - Import sources/jobs orchestration service
   - AI assistant planning + confirmation token validation + apply executor
@@ -42,6 +47,7 @@
   - Ledger + invariants: `GET /api/business/ledger`, `GET /api/business/invariants/check`
   - Reconciliation: `POST /api/business/reconcile/run`, `GET /api/business/reconcile/status`
   - Reports: `GET/POST /api/business/reports/{reportType}`
+  - Integrations: `GET/POST /api/business/integrations`, `POST /api/business/integrations/{id}/test`, `DELETE /api/business/integrations/{id}`
   - Imports: `GET/POST /api/business/imports/sources`, `GET/POST /api/business/imports/jobs`, `GET /api/business/imports/jobs/{id}`
   - AI: `POST /api/business/ai/chat`, `POST /api/business/ai/apply`
   - Audit: `GET /api/business/audit`
@@ -60,9 +66,12 @@
   - Strict typing fixes for OpenAI HTTP handlers (`ai-chat`, `ai-pricing`, `image-generate`, `config-upsert`)
   - Type and schema compatibility fixes in Business settings and config sequence handling
   - Request/response shape hardening for newly added Business endpoints
+  - Integration guardrails: import sources and non-manual bank feeds now require a tested integration profile
 
 ### Notes
-- External marketplace adapters (Steam/Apple/Google Play/DistroKid) are implemented as import-source/job orchestration endpoints and scheduler-ready pipelines in this codebase. Provider credentials and tenant-specific connection details remain deployment/config concerns.
+- External marketplace and bank credentials are now managed through the Business Integrations UI and persisted server-side as encrypted integration profiles.
+- Import sources and bank feed setup reference integration IDs, and import jobs enforce “tested and connected” status before execution.
+- Integrations UI now includes provider-specific setup guidance (prerequisites, field-level hints, step-by-step checklists, official documentation links, and troubleshooting) for Plaid, Mountain America OFX, Steam, Apple App Store Connect, Google Play, and DistroKid.
 
 ## Foundry baseline and extension strategy
 

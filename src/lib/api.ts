@@ -9,6 +9,8 @@ import type {
   BusinessCustomer,
   BusinessCustomerInput,
   BusinessImportJob,
+  BusinessIntegration,
+  BusinessIntegrationInput,
   BusinessImportSource,
   BusinessInvoice,
   BusinessInvoiceInput,
@@ -153,6 +155,7 @@ export const saveBusinessBankAccount = (payload: {
   mask?: string;
   currency?: string;
   feedType?: "plaid" | "ofx" | "manual";
+  integrationId?: string;
   connectionState?: "connected" | "needs_reauth" | "disabled";
   ledgerCashAccountId?: string;
 }) => sendJson<BusinessBankAccount>("/business/bank/accounts", "POST", payload);
@@ -210,6 +213,7 @@ export const fetchBusinessImportSources = () => getJson<BusinessImportSource[]>(
 export const saveBusinessImportSource = (payload: {
   id?: string;
   type: BusinessImportSource["type"];
+  integrationId?: string;
   config?: Record<string, unknown>;
   schedule?: string;
   state?: "active" | "disabled";
@@ -226,6 +230,11 @@ export const fetchBusinessImportJobs = (params?: { sourceId?: string; limit?: nu
 export const runBusinessImportJob = (payload: { sourceId: string; idempotencyKey?: string; options?: Record<string, unknown> }) =>
   sendJson<BusinessImportJob>("/business/imports/jobs", "POST", payload);
 export const fetchBusinessImportJob = (id: string) => getJson<BusinessImportJob>(`/business/imports/jobs/${encodeURIComponent(id)}`);
+
+export const fetchBusinessIntegrations = () => getJson<BusinessIntegration[]>("/business/integrations");
+export const saveBusinessIntegration = (payload: BusinessIntegrationInput) => sendJson<BusinessIntegration>("/business/integrations", "POST", payload);
+export const testBusinessIntegration = (id: string) => sendJson<BusinessIntegration>(`/business/integrations/${encodeURIComponent(id)}/test`, "POST");
+export const deleteBusinessIntegration = (id: string) => sendJson<void>(`/business/integrations/${encodeURIComponent(id)}`, "DELETE");
 
 export const fetchBusinessInvariants = () =>
   getJson<{

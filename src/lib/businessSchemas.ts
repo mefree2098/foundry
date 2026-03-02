@@ -186,6 +186,7 @@ export const businessBankAccountSchema = z.object({
   mask: z.string().optional(),
   currency: z.string(),
   feedType: z.enum(["plaid", "ofx", "manual"]),
+  integrationId: z.string().optional(),
   connectionState: z.enum(["connected", "needs_reauth", "disabled"]),
   ledgerCashAccountId: z.string(),
   lastSyncAt: z.string().optional(),
@@ -218,12 +219,34 @@ export const businessBankTransactionSchema = z.object({
 export const businessImportSourceSchema = z.object({
   id: z.string(),
   type: z.enum(["steam", "apple", "googleplay", "distrokid", "bank-csv", "bank-ofx", "manual"]),
+  integrationId: z.string().optional(),
   config: z.record(z.string(), z.unknown()),
   schedule: z.string().optional(),
   state: z.enum(["active", "disabled"]),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastRunAt: z.string().optional(),
+});
+
+export const businessIntegrationProviderSchema = z.enum(["plaid", "mountain-america-ofx", "steam", "apple", "googleplay", "distrokid"]);
+
+export const businessIntegrationSchema = z.object({
+  id: z.string(),
+  provider: businessIntegrationProviderSchema,
+  displayName: z.string(),
+  config: z.record(z.string(), z.unknown()),
+  state: z.enum(["active", "disabled"]),
+  status: z.enum(["not_tested", "connected", "needs_attention", "disabled"]),
+  statusMessage: z.string().optional(),
+  lastTestedAt: z.string().optional(),
+  secretMeta: z.object({
+    keyCount: z.number().int().nonnegative(),
+    keys: z.array(z.string()),
+    updatedAt: z.string().optional(),
+  }),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  updatedBy: z.string().optional(),
 });
 
 export const businessImportJobSchema = z.object({
@@ -309,6 +332,7 @@ export type BusinessBankAccount = z.infer<typeof businessBankAccountSchema>;
 export type BusinessBankTransaction = z.infer<typeof businessBankTransactionSchema>;
 export type BusinessImportSource = z.infer<typeof businessImportSourceSchema>;
 export type BusinessImportJob = z.infer<typeof businessImportJobSchema>;
+export type BusinessIntegration = z.infer<typeof businessIntegrationSchema>;
 export type BusinessReconcileRun = z.infer<typeof businessReconcileRunSchema>;
 export type BusinessAuditEvent = z.infer<typeof businessAuditEventSchema>;
 export type BusinessAiAction = z.infer<typeof businessAiActionSchema>;
@@ -358,4 +382,13 @@ export type BusinessPaymentInput = {
   reference?: string;
   type?: "payment" | "refund" | "writeoff";
   bankAccountId?: string;
+};
+
+export type BusinessIntegrationInput = {
+  id?: string;
+  provider: BusinessIntegration["provider"];
+  displayName: string;
+  config?: Record<string, unknown>;
+  secrets?: Record<string, string>;
+  state?: BusinessIntegration["state"];
 };

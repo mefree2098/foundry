@@ -1,6 +1,7 @@
 import { database } from "../client.js";
 import { containers } from "../cosmos.js";
 import { getBusinessConfig } from "./config.js";
+import { assertBankFeedIntegrationReady } from "./integrations.js";
 import {
   bankAccountInputSchema,
   bankAccountSchema,
@@ -44,6 +45,9 @@ export async function upsertBankAccount(payload: unknown): Promise<BankAccount> 
 
   const id = (parsedInput.id || makeEntityId("bank")).toLowerCase();
   const existing = await getBankAccountById(id);
+  const feedType = parsedInput.feedType || existing?.feedType || "manual";
+  const integrationId = parsedInput.integrationId || existing?.integrationId;
+  await assertBankFeedIntegrationReady(feedType, integrationId);
 
   const account = bankAccountSchema.parse({
     ...existing,
@@ -53,7 +57,8 @@ export async function upsertBankAccount(payload: unknown): Promise<BankAccount> 
     institution: parsedInput.institution,
     mask: parsedInput.mask,
     currency: parsedInput.currency || existing?.currency || config.baseCurrency,
-    feedType: parsedInput.feedType || existing?.feedType || "manual",
+    feedType,
+    integrationId,
     connectionState: parsedInput.connectionState || existing?.connectionState || "connected",
     ledgerCashAccountId: parsedInput.ledgerCashAccountId || existing?.ledgerCashAccountId || config.systemAccountMap.cash,
     createdAt: existing?.createdAt || nowIso(),

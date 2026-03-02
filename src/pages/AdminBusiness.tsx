@@ -4,6 +4,7 @@ import { useAuth } from "../hooks/useAuth";
 import BankingPage from "./adminBusiness/BankingPage";
 import BusinessAssistantPage from "./adminBusiness/BusinessAssistantPage";
 import CustomersPage from "./adminBusiness/CustomersPage";
+import IntegrationsPage from "./adminBusiness/IntegrationsPage";
 import ImportsPage from "./adminBusiness/ImportsPage";
 import InvoicesPage from "./adminBusiness/InvoicesPage";
 import LedgerPage from "./adminBusiness/LedgerPage";
@@ -20,6 +21,7 @@ const sections = [
   { path: "customers", label: "Customers" },
   { path: "vendors", label: "Vendors" },
   { path: "banking", label: "Banking" },
+  { path: "integrations", label: "Integrations" },
   { path: "imports", label: "Imports" },
   { path: "ledger", label: "Ledger" },
   { path: "reconcile", label: "Reconcile" },
@@ -30,7 +32,7 @@ const sections = [
 ] as const;
 
 function AdminBusiness() {
-  const { loading: authLoading, isAdmin } = useAuth();
+  const { loading: authLoading, isAdmin, isAuthenticated, userDetails, identityProvider, userId } = useAuth();
 
   const loginButtons = (
     <div className="mt-4 flex flex-wrap gap-2">
@@ -46,13 +48,27 @@ function AdminBusiness() {
     </div>
   );
 
+  const displayIdentity = userDetails || userId || "Unknown user";
+
   if (!authLoading && !isAdmin) {
     return (
       <SectionCard title="Business Admin">
         <div className="space-y-2 text-sm text-red-200">
           <p>Admin privileges required.</p>
           <p>Business operations are locked behind the same server-side admin checks as the rest of /admin.</p>
-          {loginButtons}
+          {isAuthenticated ? (
+            <div className="rounded-lg border border-red-300/20 bg-red-400/10 px-3 py-2 text-xs text-red-100">
+              Signed in as {displayIdentity}
+              {identityProvider ? ` via ${identityProvider}` : ""}.
+              <div className="mt-2">
+                <a className="btn btn-secondary" href="/.auth/logout?post_logout_redirect_uri=/admin/business/overview">
+                  Sign out
+                </a>
+              </div>
+            </div>
+          ) : (
+            loginButtons
+          )}
         </div>
       </SectionCard>
     );
@@ -64,8 +80,18 @@ function AdminBusiness() {
         <p className="text-sm text-emerald-100">
           Accounting and finance workspace for invoicing, imports, reconciliation, and reporting.
         </p>
-        {authLoading ? <p className="mt-2 text-sm text-slate-300">Checking access...</p> : <p className="mt-2 text-sm text-emerald-100">Access granted.</p>}
-        {loginButtons}
+        {authLoading ? (
+          <p className="mt-2 text-sm text-slate-300">Checking access...</p>
+        ) : (
+          <div className="mt-2 space-y-1 text-sm text-emerald-100">
+            <p>Access granted.</p>
+            <p className="text-xs text-emerald-200/90">
+              Signed in as {displayIdentity}
+              {identityProvider ? ` via ${identityProvider}` : ""}.
+            </p>
+          </div>
+        )}
+        {!authLoading && !isAuthenticated ? loginButtons : null}
       </SectionCard>
 
       <div className="glass-surface rounded-2xl border border-white/10 p-3">
@@ -95,6 +121,7 @@ function AdminBusiness() {
         <Route path="customers" element={<CustomersPage />} />
         <Route path="vendors" element={<VendorsPage />} />
         <Route path="banking" element={<BankingPage />} />
+        <Route path="integrations" element={<IntegrationsPage />} />
         <Route path="imports" element={<ImportsPage />} />
         <Route path="ledger" element={<LedgerPage />} />
         <Route path="reconcile" element={<ReconcilePage />} />
