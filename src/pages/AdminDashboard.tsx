@@ -562,7 +562,7 @@ function AdminDashboard() {
 
   const handleGeneratePlatformImage = async () => {
     if (!config?.ai?.adminAssistant?.openai?.hasApiKey) {
-      alert("OpenAI API key not saved yet. Set it under Admin > AI assistant.");
+      alert("Image generation requires an OpenAI API key. Set it under Admin > AI assistant.");
       return;
     }
     const prompt = window.prompt(
@@ -584,7 +584,7 @@ function AdminDashboard() {
 
   const handleGenerateNewsImage = async () => {
     if (!config?.ai?.adminAssistant?.openai?.hasApiKey) {
-      alert("OpenAI API key not saved yet. Set it under Admin > AI assistant.");
+      alert("Image generation requires an OpenAI API key. Set it under Admin > AI assistant.");
       return;
     }
     const prompt = window.prompt(

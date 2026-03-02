@@ -5,6 +5,8 @@ import {
   aiChat,
   type AiChatAction,
   type AiChatMessage,
+  type CodexModelPickerItem,
+  fetchCodexModels,
   fetchConfig,
   fetchNews,
   fetchPlatforms,
@@ -21,6 +23,7 @@ import {
 import type { SiteConfig } from "../lib/types";
 
 type Personality = { id: string; name: string; prompt: string };
+type OpenAiAuthMode = "apiKey" | "codexPath";
 
 const PERSONALITY_PRESETS: Personality[] = [
   {
@@ -164,7 +167,10 @@ function AdminAiAssistant() {
   const { data: topics = [] } = useQuery({ queryKey: ["topics"], queryFn: fetchTopics });
   const { data: news = [] } = useQuery({ queryKey: ["news", { all: true }], queryFn: () => fetchNews() });
 
+  const [authMode, setAuthMode] = useState<OpenAiAuthMode>("apiKey");
   const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [codexPathDraft, setCodexPathDraft] = useState("");
+  const [codexHomeDraft, setCodexHomeDraft] = useState("");
   const [model, setModel] = useState("gpt-4o-mini");
   const [imageModel, setImageModel] = useState("gpt-image-1.5");
   const [imageSize, setImageSize] = useState("1024x1024");
@@ -193,18 +199,24 @@ function AdminAiAssistant() {
 
   useEffect(() => {
     if (!config) return;
+    const cfgAuthMode = config.ai?.adminAssistant?.openai?.authMode;
     const cfgModel = config.ai?.adminAssistant?.openai?.model;
     const cfgImageModel = config.ai?.adminAssistant?.openai?.imageModel;
     const cfgImageSize = config.ai?.adminAssistant?.openai?.imageSize;
     const cfgImageQuality = config.ai?.adminAssistant?.openai?.imageQuality;
     const cfgImageBackground = config.ai?.adminAssistant?.openai?.imageBackground;
     const cfgImageOutputFormat = config.ai?.adminAssistant?.openai?.imageOutputFormat;
-    setModel((cfgModel && cfgModel.trim()) || "gpt-4o-mini");
+    const cfgCodexPath = config.ai?.adminAssistant?.openai?.codexPath;
+    const cfgCodexHome = config.ai?.adminAssistant?.openai?.codexHome;
+    setAuthMode(cfgAuthMode === "codexPath" ? "codexPath" : "apiKey");
+    setModel((cfgModel && cfgModel.trim()) || (cfgAuthMode === "codexPath" ? "gpt-5.1-codex" : "gpt-4o-mini"));
     setImageModel((cfgImageModel && cfgImageModel.trim()) || "gpt-image-1.5");
     setImageSize((cfgImageSize && cfgImageSize.trim()) || "1024x1024");
     setImageQuality((cfgImageQuality as any) || "auto");
     setImageBackground((cfgImageBackground as any) || "auto");
     setImageOutputFormat((cfgImageOutputFormat as any) || "png");
+    setCodexPathDraft((cfgCodexPath && cfgCodexPath.trim()) || "");
+    setCodexHomeDraft((cfgCodexHome && cfgCodexHome.trim()) || "");
     setApiKeyDraft("");
     setClearStoredKey(false);
   }, [config]);
@@ -219,18 +231,66 @@ function AdminAiAssistant() {
     };
   }, [config, platforms, topics, news]);
 
+  const codexModelsQuery = useQuery({
+    queryKey: ["ai", "codex-models", authMode],
+    queryFn: () =>
+      fetchCodexModels({
+        codexPath: codexPathDraft.trim() || undefined,
+        codexHome: codexHomeDraft.trim() || undefined,
+      }),
+    enabled: authMode === "codexPath",
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+  const codexModels = codexModelsQuery.data?.models || [];
+  const codexModelOptions = useMemo(() => {
+    const options = [...codexModels];
+    const currentModel = model.trim();
+    if (currentModel && !options.some((item) => item.model === currentModel)) {
+      const customOption: CodexModelPickerItem = {
+        id: `custom-${currentModel}`,
+        model: currentModel,
+        displayName: `${currentModel} (custom)`,
+        description: "",
+        hidden: false,
+        isDefault: false,
+        supportsPersonality: false,
+        inputModalities: [],
+        supportedReasoningEfforts: [],
+      };
+      options.unshift(customOption);
+    }
+    return options;
+  }, [codexModels, model]);
+
+  useEffect(() => {
+    if (authMode !== "codexPath") return;
+    if (!codexModels.length) return;
+    const currentModel = model.trim();
+    if (currentModel && codexModels.some((item) => item.model === currentModel)) return;
+    const preferred = codexModels.find((item) => item.isDefault) || codexModels[0];
+    if (preferred?.model) setModel(preferred.model);
+  }, [authMode, codexModels, model]);
+
   const hasStoredKey = Boolean(config?.ai?.adminAssistant?.openai?.hasApiKey);
+  const hasStoredCodexPath = Boolean(
+    config?.ai?.adminAssistant?.openai?.hasCodexPath || (config?.ai?.adminAssistant?.openai?.codexPath || "").trim(),
+  );
+  const configuredAuthMode: OpenAiAuthMode = config?.ai?.adminAssistant?.openai?.authMode === "codexPath" ? "codexPath" : "apiKey";
 
   const saveOpenAiSettings = useMutation({
     mutationFn: async () => {
       const base = config || ({ id: "global" } as any);
       const openaiPatch: any = {
-        model: model.trim() || "gpt-4o-mini",
+        authMode,
+        model: model.trim() || (authMode === "codexPath" ? "gpt-5.1-codex" : "gpt-4o-mini"),
         imageModel: imageModel.trim() || "gpt-image-1.5",
         imageSize: imageSize.trim() || "1024x1024",
         imageQuality,
         imageBackground,
         imageOutputFormat,
+        codexPath: codexPathDraft,
+        codexHome: codexHomeDraft,
       };
       if (clearStoredKey) {
         openaiPatch.clearApiKey = true;
@@ -351,7 +411,7 @@ function AdminAiAssistant() {
   const send = async () => {
     const content = draft.trim();
     if (!content) return;
-    if (!hasStoredKey) {
+    if (configuredAuthMode === "apiKey" && !hasStoredKey) {
       alert("No OpenAI API key saved yet. Save it under OpenAI settings first.");
       return;
     }
@@ -389,14 +449,21 @@ function AdminAiAssistant() {
   };
 
   return (
-    <SectionCard title="Admin AI assistant (OpenAI)">
+    <SectionCard title="Admin AI assistant (OpenAI / Codex)">
       <div className="space-y-4">
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <div className="text-xs text-slate-300">OpenAI settings</div>
               <div className="text-xs text-slate-400">
-                {hasStoredKey ? "API key is saved (hidden)." : "No API key saved yet."} Leave the key blank to keep the stored key.
+                {configuredAuthMode === "apiKey"
+                  ? hasStoredKey
+                    ? "Auth mode: API key. Key is saved (hidden)."
+                    : "Auth mode: API key. No API key saved yet."
+                  : hasStoredCodexPath
+                    ? "Auth mode: Codex subscription. Codex path is saved."
+                    : "Auth mode: Codex subscription. Using PATH lookup unless you set a codex path."}{" "}
+                Leave API key blank to keep the stored key.
               </div>
             </div>
             <button
@@ -410,13 +477,74 @@ function AdminAiAssistant() {
           </div>
 
           <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <select className="input-field" value={authMode} onChange={(e) => setAuthMode(e.target.value as OpenAiAuthMode)}>
+              <option value="apiKey">Auth mode: OpenAI API key</option>
+              <option value="codexPath">Auth mode: Codex subscription</option>
+            </select>
             <input
               className="input-field"
               placeholder={hasStoredKey ? "•••••••••••••••• (stored, hidden)" : "OpenAI API key"}
               value={apiKeyDraft}
               onChange={(e) => setApiKeyDraft(e.target.value)}
             />
-            <input className="input-field" placeholder="Model (e.g., gpt-4o-mini)" value={model} onChange={(e) => setModel(e.target.value)} />
+            <input
+              className="input-field"
+              placeholder={hasStoredCodexPath ? "Codex path (stored)" : "Codex path (optional, defaults to `codex`)"}
+              value={codexPathDraft}
+              onChange={(e) => setCodexPathDraft(e.target.value)}
+            />
+            <input
+              className="input-field"
+              placeholder="Codex home (optional, keeps subscription login state)"
+              value={codexHomeDraft}
+              onChange={(e) => setCodexHomeDraft(e.target.value)}
+            />
+            {authMode === "codexPath" ? (
+              <div className="md:col-span-2 space-y-2">
+                <select className="input-field" value={model} onChange={(e) => setModel(e.target.value)} disabled={codexModelsQuery.isLoading}>
+                  {codexModelOptions.length ? (
+                    codexModelOptions.map((item) => (
+                      <option key={item.id} value={item.model}>
+                        {item.displayName}
+                        {item.hidden ? " (hidden)" : ""}
+                      </option>
+                    ))
+                  ) : (
+                    <option value={model || ""}>{codexModelsQuery.isLoading ? "Loading models..." : "No models returned"}</option>
+                  )}
+                </select>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => codexModelsQuery.refetch()}
+                    disabled={codexModelsQuery.isFetching}
+                  >
+                    {codexModelsQuery.isFetching ? "Refreshing models..." : "Refresh model list"}
+                  </button>
+                  <div className="text-xs text-slate-300">
+                    {codexModelsQuery.data?.loginRequired ? (
+                      <>
+                        ChatGPT login required for Codex.{" "}
+                        {codexModelsQuery.data.authUrl ? (
+                          <a className="underline text-slate-200" href={codexModelsQuery.data.authUrl} target="_blank" rel="noreferrer">
+                            Open login URL
+                          </a>
+                        ) : null}
+                      </>
+                    ) : codexModelsQuery.isError ? (
+                      codexModelsQuery.error instanceof Error ? codexModelsQuery.error.message : "Failed to load models."
+                    ) : codexModelOptions.length ? (
+                      `${codexModelOptions.length} models available from Codex.`
+                    ) : (
+                      "No Codex models available yet."
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <input className="input-field" placeholder="Model (e.g., gpt-4o-mini)" value={model} onChange={(e) => setModel(e.target.value)} />
+            )}
             <input
               className="input-field"
               placeholder="Image model (e.g., gpt-image-1.5)"
@@ -454,6 +582,7 @@ function AdminAiAssistant() {
               />
               Clear stored API key
             </label>
+            <div className="md:col-span-2 text-xs text-slate-300">Note: image generation still uses the OpenAI API key path.</div>
             <div className="md:col-span-2 text-xs text-slate-300">
               Model list:{" "}
               <a className="underline text-slate-200" href="https://platform.openai.com/docs/models" target="_blank" rel="noreferrer">

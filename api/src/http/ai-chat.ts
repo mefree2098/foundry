@@ -6,6 +6,7 @@ import { database } from "../client.js";
 import { containers } from "../cosmos.js";
 import { siteConfigSchema } from "../types/content.js";
 import { recordChatUsage } from "../aiUsage.js";
+import { buildCodexTurnInput, CodexLoginRequiredError, runCodexChat } from "../codex/appServer.js";
 
 const INTERNAL_TRAINING = `You are the Foundry admin assistant.
 
@@ -65,7 +66,10 @@ const messageSchema = z.object({
 });
 
 const requestSchema = z.object({
+  authMode: z.enum(["apiKey", "codexPath"]).optional(),
   apiKey: z.string().min(1).optional(),
+  codexPath: z.string().min(1).optional(),
+  codexHome: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   messages: z.array(messageSchema).min(1),
   context: z
@@ -106,6 +110,9 @@ const responseSchema = z.object({
 
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 120000);
 const OPENAI_MAX_TOKENS = Number(process.env.OPENAI_MAX_TOKENS || 128000);
+const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || OPENAI_TIMEOUT_MS);
+const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+const DEFAULT_CODEX_MODEL = "gpt-5.1-codex";
 const APPLY_ACTIONS_TOOL_NAME = "apply_admin_actions";
 
 type StreamEvent =
@@ -316,6 +323,98 @@ function aiErrorResponse(message: string): HttpResponseInit {
   };
 }
 
+async function recordUsage(
+  model: string,
+  usage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined,
+  context: InvocationContext,
+) {
+  if (!usage) return;
+  if (usage.totalTokens <= 0) return;
+  if (!model.trim()) return;
+  try {
+    await recordChatUsage(model, usage);
+  } catch (err) {
+    context.log(`Failed to record AI usage: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function streamChatViaCodex(
+  {
+    codexPath,
+    codexHome,
+    model,
+    systemPrompt,
+    messages,
+  }: {
+    codexPath: string;
+    codexHome?: string;
+    model: string;
+    systemPrompt: string;
+    messages: { role: "user" | "assistant"; content: string }[];
+  },
+  context: InvocationContext,
+): Promise<HttpResponseInit> {
+  const encoder = new TextEncoder();
+  let sentDone = false;
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (payload: StreamEvent) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+      };
+
+      let streamedText = "";
+      try {
+        const result = await runCodexChat({
+          codexPath,
+          codexHome,
+          model,
+          developerInstructions: systemPrompt,
+          inputText: buildCodexTurnInput(messages),
+          outputSchema: ACTION_ENVELOPE_SCHEMA,
+          requestTimeoutMs: CODEX_TIMEOUT_MS,
+          turnTimeoutMs: CODEX_TIMEOUT_MS,
+          onDelta: (delta) => {
+            streamedText += delta;
+            send({ type: "delta", text: delta });
+          },
+          context,
+        });
+
+        const assistantText = result.assistantText || streamedText;
+        const parsedResponse = parseAiResponse(assistantText);
+        await recordUsage(model, result.usage, context);
+        send({ type: "done", assistantMessage: parsedResponse.assistantMessage, actions: parsedResponse.actions });
+        sentDone = true;
+      } catch (err) {
+        const message =
+          err instanceof CodexLoginRequiredError
+            ? `Codex subscription login required. Open this URL and retry: ${err.authUrl}`
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        send({ type: "error", message });
+      } finally {
+        if (!sentDone) {
+          const parsed = parseAiResponse(streamedText || "");
+          send({ type: "done", assistantMessage: parsed.assistantMessage, actions: parsed.actions });
+        }
+        controller.close();
+      }
+    },
+  });
+
+  return {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+    body: stream as unknown as HttpResponseInit["body"],
+  };
+}
+
 async function streamChat(
   {
     apiKey,
@@ -485,11 +584,14 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
       return { status: 400, body: JSON.stringify(parsed.error.flatten()) };
     }
 
-    const { apiKey, model, messages, context: clientContext } = parsed.data;
+    const { authMode, apiKey, codexPath, codexHome, model, messages, context: clientContext } = parsed.data;
 
     let personalityPrompt: string | undefined;
     let storedOpenAiKey: string | undefined;
     let storedOpenAiModel: string | undefined;
+    let storedAuthMode: "apiKey" | "codexPath" | undefined;
+    let storedCodexPath: string | undefined;
+    let storedCodexHome: string | undefined;
     try {
       const container = database.container(containers.config);
       const id = "global";
@@ -503,17 +605,29 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
         personalityPrompt = active?.prompt;
         storedOpenAiKey = assistant?.openai?.apiKey;
         storedOpenAiModel = assistant?.openai?.model;
+        storedAuthMode = assistant?.openai?.authMode === "codexPath" ? "codexPath" : assistant?.openai?.authMode === "apiKey" ? "apiKey" : undefined;
+        storedCodexPath = assistant?.openai?.codexPath;
+        storedCodexHome = assistant?.openai?.codexHome;
       }
     } catch {
       personalityPrompt = undefined;
       storedOpenAiKey = undefined;
       storedOpenAiModel = undefined;
+      storedAuthMode = undefined;
+      storedCodexPath = undefined;
+      storedCodexHome = undefined;
     }
 
+    const finalAuthMode: "apiKey" | "codexPath" = authMode || storedAuthMode || "apiKey";
+    const finalModel = (model || storedOpenAiModel || (finalAuthMode === "codexPath" ? DEFAULT_CODEX_MODEL : DEFAULT_OPENAI_MODEL)).trim();
     const finalApiKey = (apiKey || storedOpenAiKey || "").trim();
-    const finalModel = (model || storedOpenAiModel || "gpt-4o-mini").trim();
-    if (!finalApiKey) {
+    const finalCodexPath = (codexPath || storedCodexPath || process.env.CODEX_PATH || "codex").trim();
+    const finalCodexHome = (codexHome || storedCodexHome || process.env.CODEX_HOME || "").trim() || undefined;
+    if (finalAuthMode === "apiKey" && !finalApiKey) {
       return aiErrorResponse("OpenAI API key not configured. Save it under Admin > AI assistant settings.");
+    }
+    if (finalAuthMode === "codexPath" && !finalCodexPath) {
+      return aiErrorResponse("Codex path is not configured. Set it under Admin > AI assistant settings.");
     }
 
     const systemPrompt = [
@@ -570,7 +684,42 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
 
     const wantsStream = req.query.get("stream") === "1";
     if (wantsStream) {
+      if (finalAuthMode === "codexPath") {
+        return streamChatViaCodex({ codexPath: finalCodexPath, codexHome: finalCodexHome, model: finalModel, systemPrompt, messages }, context);
+      }
       return streamChat({ apiKey: finalApiKey, model: finalModel, messages: openAiMessages }, context);
+    }
+
+    if (finalAuthMode === "codexPath") {
+      try {
+        const codexResult = await runCodexChat({
+          codexPath: finalCodexPath,
+          codexHome: finalCodexHome,
+          model: finalModel,
+          developerInstructions: systemPrompt,
+          inputText: buildCodexTurnInput(messages),
+          outputSchema: ACTION_ENVELOPE_SCHEMA,
+          requestTimeoutMs: CODEX_TIMEOUT_MS,
+          turnTimeoutMs: CODEX_TIMEOUT_MS,
+          context,
+        });
+        await recordUsage(finalModel, codexResult.usage, context);
+        const parsedResponse = parseAiResponse(codexResult.assistantText || "");
+        return {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assistantMessage: parsedResponse.assistantMessage, actions: parsedResponse.actions }),
+        };
+      } catch (err) {
+        if (err instanceof CodexLoginRequiredError) {
+          return aiErrorResponse(
+            `Codex subscription login is required. Open this URL, finish login, then retry: ${err.authUrl}`,
+          );
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        context.log(`Codex request failed: ${message}`);
+        return aiErrorResponse(`Codex request failed: ${message}`);
+      }
     }
 
     let upstream: Response;

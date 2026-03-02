@@ -257,14 +257,18 @@ export const siteConfigSchema = z.object({
         .object({
           openai: z
             .object({
+              authMode: z.enum(["apiKey", "codexPath"]).optional(),
               model: z.string().optional(),
               imageModel: z.string().optional(),
               imageSize: z.string().optional(),
               imageQuality: z.string().optional(),
               imageBackground: z.string().optional(),
               imageOutputFormat: z.string().optional(),
+              codexPath: z.string().optional(),
+              codexHome: z.string().optional(),
               apiKey: z.string().optional(),
               hasApiKey: z.boolean().optional(),
+              hasCodexPath: z.boolean().optional(),
               clearApiKey: z.boolean().optional(),
             })
             .optional(),

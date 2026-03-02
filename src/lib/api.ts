@@ -405,15 +405,46 @@ export type AiChatAction =
 
 export type AiChatResponse = { assistantMessage: string; actions?: AiChatAction[] };
 
+export type CodexModelPickerItem = {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  hidden: boolean;
+  isDefault: boolean;
+  supportsPersonality: boolean;
+  defaultReasoningEffort?: string;
+  inputModalities: string[];
+  supportedReasoningEfforts: string[];
+  upgrade?: string;
+};
+
+export const fetchCodexModels = (params?: { codexPath?: string; codexHome?: string; includeHidden?: boolean }) => {
+  const search = new URLSearchParams();
+  if (params?.codexPath) search.set("codexPath", params.codexPath);
+  if (params?.codexHome) search.set("codexHome", params.codexHome);
+  if (params?.includeHidden) search.set("includeHidden", "1");
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return getJson<{ source: "codex"; includeHidden: boolean; loginRequired: boolean; authUrl?: string; models: CodexModelPickerItem[] }>(
+    `/ai/codex-models${suffix}`,
+  );
+};
+
 export const aiChat = (payload: {
+  authMode?: "apiKey" | "codexPath";
   apiKey?: string;
+  codexPath?: string;
+  codexHome?: string;
   model?: string;
   messages: AiChatMessage[];
   context?: unknown;
 }) => sendJson<AiChatResponse>("/ai/chat", "POST", payload);
 
 export const aiChatStream = (payload: {
+  authMode?: "apiKey" | "codexPath";
   apiKey?: string;
+  codexPath?: string;
+  codexHome?: string;
   model?: string;
   messages: AiChatMessage[];
   context?: unknown;

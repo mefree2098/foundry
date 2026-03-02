@@ -47,7 +47,23 @@ async function upsertConfig(req: HttpRequest, context: InvocationContext): Promi
     ...(wantsClearOpenAiKey ? { apiKey: undefined } : hasNewOpenAiKey ? {} : { apiKey: existingOpenAiKey }),
   };
   delete mergedOpenAi.clearApiKey;
-  if (typeof mergedOpenAi.apiKey === "string" && mergedOpenAi.apiKey.trim()) mergedOpenAi.hasApiKey = true;
+  if (typeof mergedOpenAi.authMode === "string" && mergedOpenAi.authMode !== "apiKey" && mergedOpenAi.authMode !== "codexPath") {
+    delete mergedOpenAi.authMode;
+  }
+  if (typeof mergedOpenAi.apiKey === "string") {
+    const trimmed = mergedOpenAi.apiKey.trim();
+    mergedOpenAi.apiKey = trimmed || undefined;
+  }
+  if (typeof mergedOpenAi.codexPath === "string") {
+    const trimmed = mergedOpenAi.codexPath.trim();
+    mergedOpenAi.codexPath = trimmed || undefined;
+  }
+  if (typeof mergedOpenAi.codexHome === "string") {
+    const trimmed = mergedOpenAi.codexHome.trim();
+    mergedOpenAi.codexHome = trimmed || undefined;
+  }
+  mergedOpenAi.hasApiKey = Boolean(typeof mergedOpenAi.apiKey === "string" && mergedOpenAi.apiKey.trim());
+  mergedOpenAi.hasCodexPath = Boolean(typeof mergedOpenAi.codexPath === "string" && mergedOpenAi.codexPath.trim());
 
   const mergedAi =
     config.ai || existing?.ai
@@ -91,6 +107,11 @@ async function upsertConfig(req: HttpRequest, context: InvocationContext): Promi
                       ...nextConfig.ai.adminAssistant.openai,
                       apiKey: undefined,
                       hasApiKey: Boolean(nextConfig.ai.adminAssistant.openai.apiKey || nextConfig.ai.adminAssistant.openai.hasApiKey),
+                      hasCodexPath: Boolean(
+                        (typeof nextConfig.ai.adminAssistant.openai.codexPath === "string"
+                          ? nextConfig.ai.adminAssistant.openai.codexPath.trim()
+                          : "") || nextConfig.ai.adminAssistant.openai.hasCodexPath,
+                      ),
                     }
                   : undefined,
               }

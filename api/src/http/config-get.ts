@@ -32,6 +32,7 @@ async function getConfig(_req: HttpRequest): Promise<HttpResponseInit> {
       : undefined;
 
     const hasOpenAiApiKey = Boolean(parsed.data.ai?.adminAssistant?.openai?.apiKey);
+    const hasCodexPath = Boolean((parsed.data.ai?.adminAssistant?.openai?.codexPath || "").trim());
     const sanitizedAi =
       parsed.data.ai?.adminAssistant?.openai || parsed.data.ai?.adminAssistant?.personalities || parsed.data.ai?.adminAssistant?.activePersonalityId
         ? {
@@ -43,6 +44,7 @@ async function getConfig(_req: HttpRequest): Promise<HttpResponseInit> {
                 apiKey: undefined,
                 clearApiKey: undefined,
                 hasApiKey: hasOpenAiApiKey,
+                hasCodexPath,
               },
             },
           }
