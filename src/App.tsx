@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import Layout from "./components/Layout";
 import About from "./pages/About";
+import AdminBusiness from "./pages/AdminBusiness";
 import AdminDashboard from "./pages/AdminDashboard";
 import Home from "./pages/Home";
 import News from "./pages/News";
@@ -27,6 +28,7 @@ function App() {
           <Route path="topics/:topicSlug" element={<TopicDetail />} />
           <Route path="about" element={<About />} />
           <Route path="subscribe" element={<Subscriptions />} />
+          <Route path="admin/business/*" element={<AdminBusiness />} />
           <Route path="admin" element={<AdminDashboard />} />
           <Route path="pages/:pageId" element={<CustomPage />} />
           <Route path=":pageId" element={<CustomPage />} />

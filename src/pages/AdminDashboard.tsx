@@ -613,6 +613,15 @@ function AdminDashboard() {
         {loginButtons}
       </SectionCard>
 
+      <SectionCard title="Business module">
+        <p className="text-sm text-slate-200">Open the accounting workspace for invoicing, customers, banking, imports, and reconciliation.</p>
+        <div className="mt-3">
+          <a className="btn btn-primary" href="/admin/business/overview">
+            Open Business Admin
+          </a>
+        </div>
+      </SectionCard>
+
       <AdminAiAssistant />
 
       <SectionCard title="AI usage & pricing">

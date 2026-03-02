@@ -101,13 +101,15 @@ async function imageGenerate(req: HttpRequest, context: InvocationContext): Prom
     return { status: 502, body: text || `Upstream error: ${upstream.status}` };
   }
 
-  const data = (await upstream.json()) as any;
-  const imageBase64 = data?.data?.[0]?.b64_json;
+  const data = (await upstream.json()) as Record<string, unknown>;
+  const images = Array.isArray(data.data) ? data.data : [];
+  const firstImage = images[0] && typeof images[0] === "object" ? (images[0] as Record<string, unknown>) : {};
+  const imageBase64 = typeof firstImage.b64_json === "string" ? firstImage.b64_json : "";
   if (!imageBase64) {
     return { status: 502, body: "OpenAI returned no image data." };
   }
 
-  const usage = data?.usage || {};
+  const usage = data.usage && typeof data.usage === "object" ? (data.usage as Record<string, unknown>) : {};
   const promptTokens = Number(usage.input_tokens || usage.prompt_tokens || 0);
   const completionTokens = Number(usage.output_tokens || usage.completion_tokens || 0);
   const totalTokens = Number(usage.total_tokens || usage.totalTokens || 0) || promptTokens + completionTokens;

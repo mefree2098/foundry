@@ -70,10 +70,10 @@ const requestSchema = z.object({
   messages: z.array(messageSchema).min(1),
   context: z
     .object({
-      config: z.any().optional(),
-      platforms: z.any().optional(),
-      topics: z.any().optional(),
-      news: z.any().optional(),
+      config: z.unknown().optional(),
+      platforms: z.unknown().optional(),
+      topics: z.unknown().optional(),
+      news: z.unknown().optional(),
     })
     .optional(),
 });
@@ -101,7 +101,7 @@ type AdminAiAction =
 
 const responseSchema = z.object({
   assistantMessage: z.string(),
-  actions: z.array(z.any()).optional(),
+  actions: z.array(z.unknown()).optional(),
 });
 
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 120000);
@@ -161,7 +161,7 @@ function normalizeActions(input: unknown): AdminAiAction[] {
   const normalized: AdminAiAction[] = [];
   for (const item of input) {
     if (!item || typeof item !== "object") continue;
-    const raw = item as any;
+    const raw = item as Record<string, unknown>;
     const type = typeof raw.type === "string" ? raw.type.trim() : "";
     if (!type) continue;
     if (type.endsWith(".delete")) {
@@ -188,7 +188,7 @@ function parseAiResponse(raw: string): { assistantMessage: string; actions: Admi
 
   const attemptParse = (value: string) => {
     try {
-      return JSON.parse(value) as any;
+      return JSON.parse(value) as unknown;
     } catch {
       return null;
     }
@@ -240,14 +240,15 @@ function parseAiResponse(raw: string): { assistantMessage: string; actions: Admi
     if (typeof value === "string") {
       const parsed = attemptParse(value) || findJsonObject(value);
       if (Array.isArray(parsed)) return parsed as AdminAiAction[];
-      if (parsed && typeof parsed === "object" && Array.isArray((parsed as any).actions)) {
-        return (parsed as any).actions as AdminAiAction[];
+      if (parsed && typeof parsed === "object") {
+        const actions = (parsed as { actions?: unknown }).actions;
+        if (Array.isArray(actions)) return actions as AdminAiAction[];
       }
     }
     return [];
   };
 
-  let parsed: any = attemptParse(trimmed);
+  let parsed: unknown = attemptParse(trimmed);
 
   if (!parsed && trimmed.startsWith("```")) {
     const fenceEnd = trimmed.lastIndexOf("```");
@@ -269,15 +270,17 @@ function parseAiResponse(raw: string): { assistantMessage: string; actions: Admi
       };
     }
     if (typeof parsed === "object") {
-      const actions = normalizeActions(extractActions(parsed.actions));
-      const assistantMessage = typeof parsed.assistantMessage === "string" ? parsed.assistantMessage : "";
+      const parsedRecord = parsed as { actions?: unknown; assistantMessage?: unknown };
+      const actions = normalizeActions(extractActions(parsedRecord.actions));
+      const assistantMessage = typeof parsedRecord.assistantMessage === "string" ? parsedRecord.assistantMessage : "";
       if (!actions.length && assistantMessage) {
         const embedded = findJsonObject(assistantMessage);
         if (embedded && typeof embedded === "object") {
-          const embeddedActions = normalizeActions(extractActions((embedded as any).actions ?? embedded));
+          const embeddedRecord = embedded as { actions?: unknown; assistantMessage?: unknown };
+          const embeddedActions = normalizeActions(extractActions(embeddedRecord.actions ?? embedded));
           if (embeddedActions.length) {
             const embeddedMessage =
-              typeof (embedded as any).assistantMessage === "string" ? (embedded as any).assistantMessage : "";
+              typeof embeddedRecord.assistantMessage === "string" ? embeddedRecord.assistantMessage : "";
             return {
               assistantMessage: embeddedMessage || assistantMessage || "Proposed actions ready.",
               actions: embeddedActions,
@@ -294,7 +297,8 @@ function parseAiResponse(raw: string): { assistantMessage: string; actions: Admi
   // Last resort: if assistantMessage contains JSON, attempt to extract actions from it.
   const embedded = findJsonObject(trimmed);
   if (embedded && typeof embedded === "object") {
-    const actions = normalizeActions(Array.isArray((embedded as any).actions) ? (embedded as any).actions : []);
+    const embeddedActions = (embedded as { actions?: unknown }).actions;
+    const actions = normalizeActions(Array.isArray(embeddedActions) ? embeddedActions : []);
     if (actions.length) {
       return { assistantMessage: "Proposed actions ready.", actions };
     }
@@ -381,7 +385,7 @@ async function streamChat(
       const reader = upstream.body!.getReader();
       let buffer = "";
       let assistantText = "";
-      let usage: any = null;
+      let usage: Record<string, unknown> | null = null;
       let done = false;
 
       const send = (payload: StreamEvent) => {
@@ -407,15 +411,22 @@ async function streamChat(
                 done = true;
                 break;
               }
-              let parsed: any;
+              let parsed: Record<string, unknown> | null = null;
               try {
-                parsed = JSON.parse(data);
+                const candidate = JSON.parse(data) as unknown;
+                parsed = typeof candidate === "object" && candidate !== null ? (candidate as Record<string, unknown>) : null;
               } catch {
                 continue;
               }
-              if (parsed?.usage) usage = parsed.usage;
-              const delta = parsed?.choices?.[0]?.delta;
-              const text = delta?.content;
+              const parsedUsage = parsed && typeof parsed.usage === "object" && parsed.usage !== null ? (parsed.usage as Record<string, unknown>) : null;
+              if (parsedUsage) usage = parsedUsage;
+              const choices = parsed && Array.isArray(parsed.choices) ? parsed.choices : [];
+              const firstChoice = choices[0];
+              const delta =
+                firstChoice && typeof firstChoice === "object" && firstChoice !== null
+                  ? ((firstChoice as { delta?: unknown }).delta as { content?: unknown } | undefined)
+                  : undefined;
+              const text = typeof delta?.content === "string" ? delta.content : "";
               if (text) {
                 assistantText += text;
                 send({ type: "delta", text });
@@ -459,7 +470,7 @@ async function streamChat(
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
     },
-    body: stream as any,
+    body: stream as unknown as HttpResponseInit["body"],
   };
 }
 
@@ -613,10 +624,16 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
       return aiErrorResponse(text || `OpenAI upstream error: ${upstream.status}`);
     }
 
-    const data = (await upstream.json()) as any;
-    const message = data?.choices?.[0]?.message || {};
-    const finishReason = String(data?.choices?.[0]?.finish_reason || "").trim();
-    const toolArgs = message?.tool_calls?.[0]?.function?.arguments;
+    const data = (await upstream.json()) as Record<string, unknown>;
+    const choices = Array.isArray(data.choices) ? data.choices : [];
+    const firstChoice = choices[0] && typeof choices[0] === "object" ? (choices[0] as Record<string, unknown>) : {};
+    const message = firstChoice.message && typeof firstChoice.message === "object" ? (firstChoice.message as Record<string, unknown>) : {};
+    const finishReason = String(firstChoice.finish_reason || "").trim();
+    const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+    const firstToolCall = toolCalls[0] && typeof toolCalls[0] === "object" ? (toolCalls[0] as Record<string, unknown>) : {};
+    const functionValue =
+      firstToolCall.function && typeof firstToolCall.function === "object" ? (firstToolCall.function as Record<string, unknown>) : {};
+    const toolArgs = functionValue.arguments;
     if (toolArgs) {
       const parsedResponse = parseAiResponse(String(toolArgs));
       const actions = parsedResponse.actions;
@@ -630,18 +647,18 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
       };
     }
 
-    const content = String(message?.content || "").trim();
+    const content = String(message.content || "").trim();
     if (!content) {
-      const refusal = typeof message?.refusal === "string" ? message.refusal : "";
+      const refusal = typeof message.refusal === "string" ? message.refusal : "";
       const details = refusal || `OpenAI returned an empty response. finish_reason=${finishReason || "unknown"}.`;
       return aiErrorResponse(details);
     }
 
-    const usage = data?.usage || {};
+    const usage = data.usage && typeof data.usage === "object" ? (data.usage as Record<string, unknown>) : {};
     const promptTokens = Number(usage.prompt_tokens || usage.input_tokens || 0);
     const completionTokens = Number(usage.completion_tokens || usage.output_tokens || 0);
     const totalTokens = Number(usage.total_tokens || 0) || promptTokens + completionTokens;
-    const resolvedModel = String(data?.model || finalModel || "").trim();
+    const resolvedModel = String(data.model || finalModel || "").trim();
     if (totalTokens > 0 && resolvedModel) {
       try {
         await recordChatUsage(resolvedModel, { promptTokens, completionTokens, totalTokens });

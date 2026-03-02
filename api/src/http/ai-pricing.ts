@@ -277,9 +277,10 @@ async function refreshPricing(req: HttpRequest, context: InvocationContext): Pro
   const auth = ensureAdmin(req);
   if (!auth.ok) return { status: auth.status, body: auth.body };
 
-  let payload: any = undefined;
+  let payload: Record<string, unknown> | undefined;
   try {
-    payload = await req.json();
+    const rawPayload = await req.json();
+    payload = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload) ? (rawPayload as Record<string, unknown>) : undefined;
   } catch {
     payload = undefined;
   }
@@ -308,11 +309,12 @@ async function refreshPricing(req: HttpRequest, context: InvocationContext): Pro
     };
   }
 
-  if (payload?.models && typeof payload.models === "object") {
+  if (payload?.models && typeof payload.models === "object" && payload.models !== null && !Array.isArray(payload.models)) {
     const models: Record<string, PricingModel> = {};
-    for (const [key, value] of Object.entries(payload.models as Record<string, any>)) {
-      const input = parseNumber(value?.inputUsdPerMillion);
-      const output = parseNumber(value?.outputUsdPerMillion);
+    for (const [key, value] of Object.entries(payload.models as Record<string, unknown>)) {
+      const modelValue = value as { inputUsdPerMillion?: unknown; outputUsdPerMillion?: unknown };
+      const input = parseNumber(modelValue.inputUsdPerMillion);
+      const output = parseNumber(modelValue.outputUsdPerMillion);
       if (input == null || output == null) continue;
       const modelKey = normalizeModelKey(key);
       if (!modelKey) continue;

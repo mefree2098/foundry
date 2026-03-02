@@ -41,13 +41,13 @@ async function upsertConfig(req: HttpRequest, context: InvocationContext): Promi
   const incomingOpenAi = config.ai?.adminAssistant?.openai;
   const wantsClearOpenAiKey = Boolean(incomingOpenAi?.clearApiKey);
   const hasNewOpenAiKey = Boolean((incomingOpenAi?.apiKey || "").trim());
-  const mergedOpenAi = {
+  const mergedOpenAi: Record<string, unknown> = {
     ...(existing?.ai?.adminAssistant?.openai || {}),
     ...(incomingOpenAi || {}),
     ...(wantsClearOpenAiKey ? { apiKey: undefined } : hasNewOpenAiKey ? {} : { apiKey: existingOpenAiKey }),
-  } as any;
+  };
   delete mergedOpenAi.clearApiKey;
-  if (mergedOpenAi.apiKey) mergedOpenAi.hasApiKey = true;
+  if (typeof mergedOpenAi.apiKey === "string" && mergedOpenAi.apiKey.trim()) mergedOpenAi.hasApiKey = true;
 
   const mergedAi =
     config.ai || existing?.ai

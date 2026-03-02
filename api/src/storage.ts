@@ -89,3 +89,25 @@ export async function uploadBase64Image(options: { filename: string; base64: str
 
   return { blobUrl: blobClient.url, name: safeName, size: buffer.length };
 }
+
+export async function uploadBlobData(options: {
+  filename: string;
+  data: Buffer | string;
+  contentType: string;
+  prefix?: string;
+}) {
+  const { blobService } = ensureStorage();
+  const container = blobService.getContainerClient(containerName);
+  await container.createIfNotExists({ access: "blob" });
+
+  const safeName = `${Date.now()}-${options.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+  const blobName = options.prefix ? `${options.prefix.replace(/^\/+|\/+$/g, "")}/${safeName}` : safeName;
+  const blobClient = container.getBlockBlobClient(blobName);
+  const buffer = Buffer.isBuffer(options.data) ? options.data : Buffer.from(options.data, "utf8");
+
+  await blobClient.uploadData(buffer, {
+    blobHTTPHeaders: { blobContentType: options.contentType },
+  });
+
+  return { blobUrl: blobClient.url, name: blobName, size: buffer.length };
+}

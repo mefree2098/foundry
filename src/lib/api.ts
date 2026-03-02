@@ -1,5 +1,24 @@
 import { QueryClient } from "@tanstack/react-query";
 import type { NewsPost, Platform, SiteConfig, Subscriber, Topic } from "./types";
+import type {
+  BusinessAiAction,
+  BusinessAuditEvent,
+  BusinessBankAccount,
+  BusinessBankTransaction,
+  BusinessConfig,
+  BusinessCustomer,
+  BusinessCustomerInput,
+  BusinessImportJob,
+  BusinessImportSource,
+  BusinessInvoice,
+  BusinessInvoiceInput,
+  BusinessJournalEntry,
+  BusinessPayment,
+  BusinessPaymentInput,
+  BusinessReconcileRun,
+  BusinessVendor,
+  BusinessVendorInput,
+} from "./businessSchemas";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,6 +51,7 @@ export const fetchNews = (params?: { platformId?: string; topic?: string }) => {
 };
 export const fetchTopics = () => getJson<Topic[]>("/topics");
 export const fetchConfig = () => getJson<SiteConfig>("/config");
+export const fetchBusinessConfig = () => getJson<BusinessConfig>("/business/config");
 
 async function sendJson<T>(path: string, method: "POST" | "PUT" | "DELETE", body?: unknown): Promise<T> {
   const res = await fetch(`${base}${path}`, {
@@ -56,6 +76,189 @@ export const saveNews = (payload: NewsPost) => sendJson<NewsPost>("/news", "POST
 export const deleteNews = (id: string) => sendJson<void>(`/news/${id}`, "DELETE");
 
 export const saveConfig = (payload: SiteConfig) => sendJson<SiteConfig>("/config", "POST", payload);
+export const saveBusinessConfig = (payload: Partial<BusinessConfig>) => sendJson<BusinessConfig>("/business/config", "POST", payload);
+
+export const fetchBusinessCustomers = () => getJson<BusinessCustomer[]>("/business/customers");
+export const fetchBusinessCustomer = (id: string) => getJson<BusinessCustomer>(`/business/customers/${encodeURIComponent(id)}`);
+export const saveBusinessCustomer = (payload: BusinessCustomerInput) => sendJson<BusinessCustomer>("/business/customers", "POST", payload);
+export const deleteBusinessCustomer = (id: string) => sendJson<void>(`/business/customers/${encodeURIComponent(id)}`, "DELETE");
+
+export const fetchBusinessAudit = (params?: { limit?: number; cursor?: string }) => {
+  const search = new URLSearchParams();
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.cursor) search.set("cursor", params.cursor);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return getJson<{ items: BusinessAuditEvent[]; cursor?: string }>(`/business/audit${suffix}`);
+};
+
+export const fetchBusinessVendors = () => getJson<BusinessVendor[]>("/business/vendors");
+export const fetchBusinessVendor = (id: string) => getJson<BusinessVendor>(`/business/vendors/${encodeURIComponent(id)}`);
+export const saveBusinessVendor = (payload: BusinessVendorInput) => sendJson<BusinessVendor>("/business/vendors", "POST", payload);
+export const deleteBusinessVendor = (id: string) => sendJson<void>(`/business/vendors/${encodeURIComponent(id)}`, "DELETE");
+
+export const fetchBusinessInvoices = (params?: {
+  status?: BusinessInvoice["status"];
+  customerId?: string;
+  limit?: number;
+  cursor?: string;
+}) => {
+  const search = new URLSearchParams();
+  if (params?.status) search.set("status", params.status);
+  if (params?.customerId) search.set("customerId", params.customerId);
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.cursor) search.set("cursor", params.cursor);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return getJson<{ items: BusinessInvoice[]; cursor?: string }>(`/business/invoices${suffix}`);
+};
+export const fetchBusinessInvoice = (id: string) => getJson<BusinessInvoice>(`/business/invoices/${encodeURIComponent(id)}`);
+export const saveBusinessInvoice = (payload: BusinessInvoiceInput) => sendJson<BusinessInvoice>("/business/invoices", "POST", payload);
+export const issueBusinessInvoice = (id: string) => sendJson<BusinessInvoice>(`/business/invoices/${encodeURIComponent(id)}/issue`, "POST");
+export const voidBusinessInvoice = (id: string) => sendJson<BusinessInvoice>(`/business/invoices/${encodeURIComponent(id)}`, "DELETE");
+export const generateBusinessInvoicePdf = (id: string) =>
+  sendJson<{ invoiceId: string; pdf: NonNullable<BusinessInvoice["pdf"]> }>(`/business/invoices/${encodeURIComponent(id)}/pdf`, "POST");
+export const fetchBusinessInvoicePdf = (id: string) =>
+  getJson<{ invoiceId: string; pdf: NonNullable<BusinessInvoice["pdf"]> }>(`/business/invoices/${encodeURIComponent(id)}/pdf`);
+export const sendBusinessInvoice = (id: string, payload?: { recipients?: string[]; idempotencyKey?: string }) =>
+  sendJson<BusinessInvoice>(`/business/invoices/${encodeURIComponent(id)}/send`, "POST", payload || {});
+
+export const fetchBusinessPayments = (params?: { invoiceId?: string; limit?: number; cursor?: string }) => {
+  const search = new URLSearchParams();
+  if (params?.invoiceId) search.set("invoiceId", params.invoiceId);
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.cursor) search.set("cursor", params.cursor);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return getJson<{ items: BusinessPayment[]; cursor?: string }>(`/business/payments${suffix}`);
+};
+export const postBusinessPayment = (payload: BusinessPaymentInput) =>
+  sendJson<{ payment: BusinessPayment; invoice?: BusinessInvoice }>("/business/payments", "POST", payload);
+export const reverseBusinessPayment = (id: string) =>
+  sendJson<{ payment: BusinessPayment; invoice?: BusinessInvoice }>(`/business/payments/${encodeURIComponent(id)}`, "DELETE");
+
+export const fetchBusinessLedger = (params?: { limit?: number; cursor?: string; trialBalance?: boolean }) => {
+  const search = new URLSearchParams();
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.cursor) search.set("cursor", params.cursor);
+  if (params?.trialBalance) search.set("trialBalance", "1");
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return getJson<{ entries: BusinessJournalEntry[]; cursor?: string; chartOfAccounts: BusinessConfig["chartOfAccounts"]; trialBalance?: { byAccount: Record<string, number>; total: number; balanced: boolean } }>(
+    `/business/ledger${suffix}`,
+  );
+};
+
+export const fetchBusinessBankAccounts = () => getJson<BusinessBankAccount[]>("/business/bank/accounts");
+export const saveBusinessBankAccount = (payload: {
+  id?: string;
+  displayName: string;
+  institution?: string;
+  mask?: string;
+  currency?: string;
+  feedType?: "plaid" | "ofx" | "manual";
+  connectionState?: "connected" | "needs_reauth" | "disabled";
+  ledgerCashAccountId?: string;
+}) => sendJson<BusinessBankAccount>("/business/bank/accounts", "POST", payload);
+
+export const fetchBusinessBankTransactions = (params?: {
+  bankAccountId?: string;
+  status?: BusinessBankTransaction["status"];
+  limit?: number;
+  cursor?: string;
+}) => {
+  const search = new URLSearchParams();
+  if (params?.bankAccountId) search.set("bankAccountId", params.bankAccountId);
+  if (params?.status) search.set("status", params.status);
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.cursor) search.set("cursor", params.cursor);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return getJson<{ items: BusinessBankTransaction[]; cursor?: string }>(`/business/bank/transactions${suffix}`);
+};
+export const importBusinessBankTransactions = (payload: {
+  bankAccountId: string;
+  source?: "csv" | "ofx" | "qfx" | "manual";
+  transactions: Array<{
+    postedDate: string;
+    description: string;
+    amountMinor: number;
+    currency?: string;
+    authorizedDate?: string;
+    merchant?: string;
+    categoryHint?: string;
+    sourceRef?: string;
+    raw?: Record<string, unknown>;
+  }>;
+}) => sendJson<{ imported: number; skipped: number; items: BusinessBankTransaction[] }>("/business/bank/import", "POST", payload);
+
+export const runBusinessReconcile = (payload: { bankAccountId: string; throughDate?: string; apply?: boolean }) =>
+  sendJson<BusinessReconcileRun>("/business/reconcile/run", "POST", payload);
+export const fetchBusinessReconcileStatus = (params?: { bankAccountId?: string; runId?: string }) => {
+  const search = new URLSearchParams();
+  if (params?.bankAccountId) search.set("bankAccountId", params.bankAccountId);
+  if (params?.runId) search.set("runId", params.runId);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return getJson<BusinessReconcileRun>(`/business/reconcile/status${suffix}`);
+};
+
+export const fetchBusinessReport = (reportType: string, params?: { fromDate?: string; toDate?: string; asOfDate?: string }) => {
+  const search = new URLSearchParams();
+  if (params?.fromDate) search.set("fromDate", params.fromDate);
+  if (params?.toDate) search.set("toDate", params.toDate);
+  if (params?.asOfDate) search.set("asOfDate", params.asOfDate);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return getJson<Record<string, unknown>>(`/business/reports/${encodeURIComponent(reportType)}${suffix}`);
+};
+
+export const fetchBusinessImportSources = () => getJson<BusinessImportSource[]>("/business/imports/sources");
+export const saveBusinessImportSource = (payload: {
+  id?: string;
+  type: BusinessImportSource["type"];
+  config?: Record<string, unknown>;
+  schedule?: string;
+  state?: "active" | "disabled";
+}) => sendJson<BusinessImportSource>("/business/imports/sources", "POST", payload);
+
+export const fetchBusinessImportJobs = (params?: { sourceId?: string; limit?: number; cursor?: string }) => {
+  const search = new URLSearchParams();
+  if (params?.sourceId) search.set("sourceId", params.sourceId);
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.cursor) search.set("cursor", params.cursor);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return getJson<{ items: BusinessImportJob[]; cursor?: string }>(`/business/imports/jobs${suffix}`);
+};
+export const runBusinessImportJob = (payload: { sourceId: string; idempotencyKey?: string; options?: Record<string, unknown> }) =>
+  sendJson<BusinessImportJob>("/business/imports/jobs", "POST", payload);
+export const fetchBusinessImportJob = (id: string) => getJson<BusinessImportJob>(`/business/imports/jobs/${encodeURIComponent(id)}`);
+
+export const fetchBusinessInvariants = () =>
+  getJson<{
+    ok: boolean;
+    checkedAt: string;
+    trialBalance: { byAccount: Record<string, number>; total: number; balanced: boolean };
+    counts: { journalEntries: number; invoices: number; bankTransactions: number };
+    issues: string[];
+  }>("/business/invariants/check");
+
+export const businessAiChat = (payload: {
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  mode?: "safe" | "simulation" | "live";
+  context?: Record<string, unknown>;
+}) =>
+  sendJson<{
+    assistantMessage: string;
+    mode: "safe" | "simulation" | "live";
+    proposedActions: BusinessAiAction[];
+    confirmToken: string;
+    payloadHash: string;
+  }>("/business/ai/chat", "POST", payload);
+
+export const businessAiApply = (payload: {
+  mode?: "simulation" | "live";
+  actions: BusinessAiAction[];
+  confirmToken?: string;
+}) =>
+  sendJson<{
+    mode: "simulation" | "live";
+    appliedCount: number;
+    results: Array<{ actionId: string; type: string; ok: boolean; result?: unknown; error?: string }>;
+  }>("/business/ai/apply", "POST", payload);
 
 export const requestUploadSas = (filename: string, contentType: string) =>
   sendJson<{ uploadUrl: string; blobUrl: string; expiresOn: string }>("/media/sas", "POST", { filename, contentType });
