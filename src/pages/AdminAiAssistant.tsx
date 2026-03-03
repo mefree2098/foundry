@@ -417,8 +417,11 @@ function AdminAiAssistant() {
       if (!callbackUrl) {
         throw new Error("Paste the localhost callback URL from your browser first.");
       }
+      if (!loginId) {
+        throw new Error("No pending Codex login session found. Click Sign in to OpenAI again and complete login from that new flow.");
+      }
       await completeCodexLogin({
-        loginId: loginId || undefined,
+        loginId,
         callbackUrl,
         codexPath: codexPathDraft.trim() || undefined,
         codexHome: effectiveCodexHomeDraft || undefined,
@@ -426,15 +429,31 @@ function AdminAiAssistant() {
     },
     onSuccess: async () => {
       setCodexCallbackDraft("");
-      setCodexPendingLoginId("");
-      const refreshed = await codexModelsQuery.refetch();
-      const payload = refreshed.data;
-      if (payload?.loginRequired) {
-        alert(
-          "Codex callback was accepted, but login is still required on this server worker. Try Refresh model list. If this persists, set/save a shared Codex home path so all workers use the same login state.",
-        );
+      const deadline = Date.now() + 45000;
+      let payload: Awaited<ReturnType<typeof fetchCodexModels>> | undefined;
+      for (;;) {
+        const refreshed = await codexModelsQuery.refetch();
+        payload = refreshed.data;
+        if (payload && !payload.loginRequired) break;
+        if (Date.now() >= deadline) break;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      if (!payload || payload.loginRequired) {
+        const health = await fetchCodexAuthHealth({
+          codexPath: codexPathDraft.trim() || undefined,
+          codexHome: effectiveCodexHomeDraft || undefined,
+          includeModelProbe: false,
+        }).catch(() => null);
+        if (health?.authenticated && !health.loginRequired) {
+          const afterHealth = await codexModelsQuery.refetch();
+          payload = afterHealth.data;
+        }
+      }
+      if (!payload || payload.loginRequired) {
+        alert("Codex callback was accepted, but login is not visible yet. Click Refresh model list in a few seconds.");
         return;
       }
+      setCodexPendingLoginId("");
       let autoSaved = false;
       try {
         autoSaved = await persistCodexSettingsAfterLogin();
@@ -494,6 +513,7 @@ function AdminAiAssistant() {
   });
 
   const openCodexLogin = async () => {
+    setCodexPendingLoginId("");
     let payload: Awaited<ReturnType<typeof fetchCodexModels>> | undefined;
     try {
       payload = await fetchCodexModels({
@@ -510,6 +530,10 @@ function AdminAiAssistant() {
     const authUrl = payload?.loginRequired ? payload.authUrl : undefined;
     if (payload?.pendingLoginId) {
       setCodexPendingLoginId(payload.pendingLoginId);
+    }
+    if (payload?.loginRequired && !payload?.pendingLoginId) {
+      alert("Codex backend could not create a pending login session. Click Sign in to OpenAI again.");
+      return;
     }
     if (authUrl) {
       window.open(authUrl, "_blank");
@@ -871,11 +895,13 @@ function AdminAiAssistant() {
                         type="button"
                         className="btn btn-primary"
                         onClick={() => completeCodexLoginMutation.mutate()}
-                        disabled={completeCodexLoginMutation.isPending || !codexCallbackDraft.trim()}
+                        disabled={completeCodexLoginMutation.isPending || !codexCallbackDraft.trim() || !codexPendingLoginId.trim()}
                       >
                         {completeCodexLoginMutation.isPending ? "Completing login..." : "Complete login"}
                       </button>
-                      {!codexPendingLoginId.trim() ? <span className="text-xs text-slate-300">No pending id detected; callback-only completion will be attempted.</span> : null}
+                      {!codexPendingLoginId.trim() ? (
+                        <span className="text-xs text-slate-300">No pending id detected. Click Sign in to OpenAI again to start a fresh login session.</span>
+                      ) : null}
                     </div>
                   </div>
                 ) : null}

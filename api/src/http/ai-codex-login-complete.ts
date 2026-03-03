@@ -35,6 +35,16 @@ async function getStoredCodexSettings() {
   }
 }
 
+function isHostedRuntime() {
+  return Boolean(
+    (process.env.WEBSITE_SITE_NAME || "").trim() ||
+      (process.env.WEBSITE_INSTANCE_ID || "").trim() ||
+      (process.env.AWS_EXECUTION_ENV || "").trim() ||
+      (process.env.ECS_CONTAINER_METADATA_URI || "").trim() ||
+      (process.env.ECS_CONTAINER_METADATA_URI_V4 || "").trim(),
+  );
+}
+
 async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   const auth = ensureAdmin(req);
   if (!auth.ok) return { status: auth.status, body: auth.body };
@@ -57,6 +67,12 @@ async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext
   const fallbackFromProfile = deriveCodexHomeFromProfile(stored.codexHomeProfile, stored.codexAwsVolumeRoot);
   const finalCodexHome = (parsed.data.codexHome || stored.codexHome || fallbackFromProfile || process.env.CODEX_HOME || "").trim() || undefined;
   const loginId = (parsed.data.loginId || "").trim();
+  if (!loginId && isHostedRuntime()) {
+    return {
+      status: 400,
+      body: "No pending Codex login session id found. Click Sign in to OpenAI again, then complete login from that new flow.",
+    };
+  }
   const relayCompletionTimeoutMs = Number(process.env.CODEX_LOGIN_HTTP_WAIT_MS || 20000);
   let relayErrorMessage = "";
 

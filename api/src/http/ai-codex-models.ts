@@ -78,12 +78,17 @@ async function aiCodexModels(req: HttpRequest, context: InvocationContext): Prom
             codexHome: finalCodexHome,
             context,
           });
-          if (started?.loginKey) {
-            pendingLoginId = started.loginKey;
-            authUrl = started.authUrl;
+          if (!started?.loginKey || !started.authUrl) {
+            const message = "Unable to start Codex login session on backend. Try Sign in again.";
+            context.log(`ai-codex-models login relay start missing session data: ${JSON.stringify(started || {})}`);
+            return { status: 502, body: message };
           }
+          pendingLoginId = started.loginKey;
+          authUrl = started.authUrl;
         } catch (relayErr) {
-          context.log(`ai-codex-models login relay start failed: ${relayErr instanceof Error ? relayErr.message : String(relayErr)}`);
+          const relayMessage = relayErr instanceof Error ? relayErr.message : String(relayErr);
+          context.log(`ai-codex-models login relay start failed: ${relayMessage}`);
+          return { status: 502, body: `Unable to start Codex login session: ${relayMessage}` };
         }
       }
       return {
