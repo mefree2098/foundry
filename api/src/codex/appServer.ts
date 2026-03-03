@@ -424,6 +424,16 @@ async function clearPendingLoginsForOwner(ownerId: string) {
   }
 }
 
+function findActivePendingLoginForOwner(ownerId: string) {
+  const now = Date.now();
+  for (const entry of pendingCodexLogins.values()) {
+    if (entry.ownerId !== ownerId) continue;
+    if (entry.expiresAt <= now) continue;
+    return entry;
+  }
+  return null;
+}
+
 function parseCallbackParams(callbackUrlOrQuery: string): URLSearchParams {
   const trimmed = callbackUrlOrQuery.trim();
   if (!trimmed) return new URLSearchParams();
@@ -1256,9 +1266,9 @@ function startRemoteTaskPumpForPendingLogin(
   let running = false;
   let lastHandledTaskId = "";
   const runPump = async () => {
-    if (running) return;
-    running = true;
     try {
+      if (running) return;
+      running = true;
       const task = await readCodexLoginTaskDoc(pending.loginKey);
       if (!task || task.status !== "pending") return;
       if (task.taskId === lastHandledTaskId) return;
@@ -1289,6 +1299,8 @@ function startRemoteTaskPumpForPendingLogin(
           await closePendingLogin(pending);
         }
       }
+    } catch (error) {
+      options?.context?.log(`Codex remote relay task pump error for login ${pending.loginKey}: ${toErrorMessage(error)}`);
     } finally {
       running = false;
     }
@@ -1310,8 +1322,17 @@ export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions)
   if (!ownerId) {
     throw new Error("ownerId is required for Codex login relay.");
   }
-
-  await clearPendingLoginsForOwner(ownerId);
+  const existingPending = findActivePendingLoginForOwner(ownerId);
+  if (existingPending) {
+    await upsertCodexLoginSessionDoc({ ownerId, loginKey: existingPending.loginKey, expiresAt: existingPending.expiresAt });
+    return {
+      loginKey: existingPending.loginKey,
+      loginId: existingPending.loginId,
+      authUrl: existingPending.authUrl,
+      callbackUrl: existingPending.callbackUrl,
+      expiresAt: existingPending.expiresAt,
+    };
+  }
 
   const requestTimeoutMs = Number.isFinite(options.requestTimeoutMs) ? Number(options.requestTimeoutMs) : DEFAULT_CODEX_RPC_TIMEOUT_MS;
   const session = new CodexAppServerSession(

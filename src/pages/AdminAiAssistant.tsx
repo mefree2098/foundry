@@ -450,7 +450,7 @@ function AdminAiAssistant() {
         }
       }
       if (!payload || payload.loginRequired) {
-        alert("Codex callback was accepted, but login is not visible yet. Click Refresh model list in a few seconds.");
+        alert("Codex callback was accepted, but login is still required. Click Sign in to OpenAI again to start a fresh session.");
         return;
       }
       setCodexPendingLoginId("");
@@ -513,7 +513,6 @@ function AdminAiAssistant() {
   });
 
   const openCodexLogin = async () => {
-    setCodexPendingLoginId("");
     let payload: Awaited<ReturnType<typeof fetchCodexModels>> | undefined;
     try {
       payload = await fetchCodexModels({
