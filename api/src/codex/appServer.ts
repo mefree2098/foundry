@@ -11,7 +11,7 @@ import type { Container } from "@azure/cosmos";
 const DEFAULT_CODEX_RPC_TIMEOUT_MS = Number(process.env.CODEX_RPC_TIMEOUT_MS || 45000);
 const DEFAULT_CODEX_TURN_TIMEOUT_MS = Number(process.env.CODEX_TURN_TIMEOUT_MS || 180000);
 const DEFAULT_CODEX_LOGIN_TTL_MS = Number(process.env.CODEX_LOGIN_TTL_MS || 10 * 60 * 1000);
-const DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS = Number(process.env.CODEX_LOGIN_COMPLETE_TIMEOUT_MS || 30000);
+const DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS = Number(process.env.CODEX_LOGIN_COMPLETE_TIMEOUT_MS || 120000);
 const STDERR_TAIL_MAX = 2000;
 const DEFAULT_CODEX_HOME_TMP_DIR = "ntechr-codex-home";
 const DEFAULT_CODEX_HOME_AZURE_DIR = "/home/site/.codex";
@@ -481,6 +481,19 @@ function hasCodexAccount(payload: unknown) {
   const account = isRecord(payload.account) ? payload.account : null;
   const accountType = account && typeof account.type === "string" ? account.type : "";
   return Boolean(accountType);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function isSessionAuthenticated(session: CodexAppServerSession, requestTimeoutMs = 5000) {
+  try {
+    const accountRead = await session.request("account/read", { refreshToken: true }, requestTimeoutMs);
+    return hasCodexAccount(accountRead);
+  } catch {
+    return false;
+  }
 }
 
 async function readCodexLoginSessionDoc(loginKey: string): Promise<CodexLoginSessionDoc | null> {
@@ -1135,16 +1148,41 @@ async function forwardPendingLoginCallback(
   }
 
   const waitMs = Number.isFinite(completionTimeoutMs) ? Number(completionTimeoutMs) : DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS;
-  await waitWithTimeout(
-    pending.completion,
-    waitMs,
-    "Timed out waiting for Codex login completion. Try again and repaste the callback URL.",
-  );
+  const deadline = Date.now() + Math.max(1000, waitMs);
+  let completionSettled = false;
+  let completionError: Error | null = null;
+  pending.completion
+    .then(() => {
+      completionSettled = true;
+    })
+    .catch((error) => {
+      completionSettled = true;
+      completionError = error instanceof Error ? error : new Error(toErrorMessage(error));
+    });
 
-  const ok = await waitForSessionAuthenticated(pending.session, 7000);
-  if (!ok) {
-    throw new Error("Codex login completion event received, but authenticated account state was not observed.");
+  while (Date.now() <= deadline) {
+    if (completionSettled) {
+      if (completionError) throw completionError;
+      const ok = await waitForSessionAuthenticated(pending.session, 7000);
+      if (!ok) {
+        throw new Error("Codex login completion event received, but authenticated account state was not observed.");
+      }
+      return;
+    }
+
+    const ok = await isSessionAuthenticated(pending.session, 5000);
+    if (ok) {
+      return;
+    }
+    await sleep(300);
   }
+
+  if (completionSettled && completionError) {
+    throw completionError;
+  }
+  const postTimeoutAuth = await waitForSessionAuthenticated(pending.session, 7000);
+  if (postTimeoutAuth) return;
+  throw new Error("Timed out waiting for Codex login completion. Try again and repaste the callback URL.");
 }
 
 async function enqueueRemoteCodexLoginCallback(options: {
@@ -1324,19 +1362,16 @@ export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions)
         return;
       }
       if (method === "account/updated") {
-        const authMode = typeof params.authMode === "string" ? params.authMode : "";
-        if (authMode === "chatgpt") {
-          void (async () => {
-            try {
-              const accountRead = await session.request("account/read", { refreshToken: true });
-              if (hasCodexAccount(accountRead)) {
-                resolveCompletion?.();
-              }
-            } catch {
-              // Ignore transient read errors; account/login/completed or timeout will decide outcome.
+        void (async () => {
+          try {
+            const accountRead = await session.request("account/read", { refreshToken: true });
+            if (hasCodexAccount(accountRead)) {
+              resolveCompletion?.();
             }
-          })();
-        }
+          } catch {
+            // Ignore transient read errors; account/login/completed or timeout will decide outcome.
+          }
+        })();
       }
     });
 

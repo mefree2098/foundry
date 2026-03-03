@@ -1,7 +1,7 @@
 import { app, type HttpRequest, type HttpResponseInit, type InvocationContext } from "@azure/functions";
 import { z } from "zod";
 import { ensureAdmin, getClientPrincipal } from "../auth.js";
-import { completeCodexLoginRelay, completeCodexLoginViaCallback } from "../codex/appServer.js";
+import { completeCodexLoginRelay, completeCodexLoginViaCallback, probeCodexAuth } from "../codex/appServer.js";
 import { database } from "../client.js";
 import { containers } from "../cosmos.js";
 import { siteConfigSchema } from "../types/content.js";
@@ -75,6 +75,25 @@ async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext
     } catch (error) {
       relayErrorMessage = error instanceof Error ? error.message : String(error);
       context.log(`ai-codex-login-complete relay failed: ${relayErrorMessage}`);
+      if (relayErrorMessage.toLowerCase().includes("timed out waiting for codex login completion")) {
+        try {
+          const probe = await probeCodexAuth({
+            codexPath: finalCodexPath,
+            codexHome: finalCodexHome,
+            includeModelProbe: false,
+            context,
+          });
+          if (probe.authenticated && !probe.loginRequired) {
+            return {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ success: true, mode: "relay-timeout-authenticated" }),
+            };
+          }
+        } catch {
+          // Keep fallback path.
+        }
+      }
     }
   }
 
