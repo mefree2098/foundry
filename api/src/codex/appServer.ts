@@ -11,7 +11,7 @@ import type { Container } from "@azure/cosmos";
 const DEFAULT_CODEX_RPC_TIMEOUT_MS = Number(process.env.CODEX_RPC_TIMEOUT_MS || 45000);
 const DEFAULT_CODEX_TURN_TIMEOUT_MS = Number(process.env.CODEX_TURN_TIMEOUT_MS || 180000);
 const DEFAULT_CODEX_LOGIN_TTL_MS = Number(process.env.CODEX_LOGIN_TTL_MS || 10 * 60 * 1000);
-const DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS = Number(process.env.CODEX_LOGIN_COMPLETE_TIMEOUT_MS || 120000);
+const DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS = Number(process.env.CODEX_LOGIN_COMPLETE_TIMEOUT_MS || 30000);
 const STDERR_TAIL_MAX = 2000;
 const DEFAULT_CODEX_HOME_TMP_DIR = "ntechr-codex-home";
 const DEFAULT_CODEX_HOME_AZURE_DIR = "/home/site/.codex";

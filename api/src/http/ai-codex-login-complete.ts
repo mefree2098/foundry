@@ -57,6 +57,7 @@ async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext
   const fallbackFromProfile = deriveCodexHomeFromProfile(stored.codexHomeProfile, stored.codexAwsVolumeRoot);
   const finalCodexHome = (parsed.data.codexHome || stored.codexHome || fallbackFromProfile || process.env.CODEX_HOME || "").trim() || undefined;
   const loginId = (parsed.data.loginId || "").trim();
+  const relayCompletionTimeoutMs = Number(process.env.CODEX_LOGIN_HTTP_WAIT_MS || 20000);
   let relayErrorMessage = "";
 
   if (loginId) {
@@ -65,6 +66,7 @@ async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext
         ownerId: principal.userId,
         loginKey: loginId,
         callbackUrlOrQuery: parsed.data.callbackUrl,
+        completionTimeoutMs: Number.isFinite(relayCompletionTimeoutMs) ? relayCompletionTimeoutMs : 20000,
         context,
       });
       return {
@@ -93,6 +95,11 @@ async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext
         } catch {
           // Keep fallback path.
         }
+        return {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ success: true, mode: "relay-timeout-pending" }),
+        };
       }
     }
   }
