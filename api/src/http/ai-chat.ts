@@ -7,6 +7,7 @@ import { containers } from "../cosmos.js";
 import { siteConfigSchema } from "../types/content.js";
 import { recordChatUsage } from "../aiUsage.js";
 import { buildCodexTurnInput, CodexLoginRequiredError, runCodexChat } from "../codex/appServer.js";
+import { deriveCodexHomeFromProfile } from "../codex/homeProfile.js";
 
 const INTERNAL_TRAINING = `You are the Foundry admin assistant.
 
@@ -592,6 +593,8 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
     let storedAuthMode: "apiKey" | "codexPath" | undefined;
     let storedCodexPath: string | undefined;
     let storedCodexHome: string | undefined;
+    let storedCodexHomeProfile: string | undefined;
+    let storedCodexAwsVolumeRoot: string | undefined;
     try {
       const container = database.container(containers.config);
       const id = "global";
@@ -608,6 +611,8 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
         storedAuthMode = assistant?.openai?.authMode === "codexPath" ? "codexPath" : assistant?.openai?.authMode === "apiKey" ? "apiKey" : undefined;
         storedCodexPath = assistant?.openai?.codexPath;
         storedCodexHome = assistant?.openai?.codexHome;
+        storedCodexHomeProfile = assistant?.openai?.codexHomeProfile;
+        storedCodexAwsVolumeRoot = assistant?.openai?.codexAwsVolumeRoot;
       }
     } catch {
       personalityPrompt = undefined;
@@ -616,13 +621,16 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
       storedAuthMode = undefined;
       storedCodexPath = undefined;
       storedCodexHome = undefined;
+      storedCodexHomeProfile = undefined;
+      storedCodexAwsVolumeRoot = undefined;
     }
 
     const finalAuthMode: "apiKey" | "codexPath" = authMode || storedAuthMode || "apiKey";
     const finalModel = (model || storedOpenAiModel || (finalAuthMode === "codexPath" ? DEFAULT_CODEX_MODEL : DEFAULT_OPENAI_MODEL)).trim();
     const finalApiKey = (apiKey || storedOpenAiKey || "").trim();
     const finalCodexPath = (codexPath || storedCodexPath || process.env.CODEX_PATH || "codex").trim();
-    const finalCodexHome = (codexHome || storedCodexHome || process.env.CODEX_HOME || "").trim() || undefined;
+    const fallbackFromProfile = deriveCodexHomeFromProfile(storedCodexHomeProfile, storedCodexAwsVolumeRoot);
+    const finalCodexHome = (codexHome || storedCodexHome || fallbackFromProfile || process.env.CODEX_HOME || "").trim() || undefined;
     if (finalAuthMode === "apiKey" && !finalApiKey) {
       return aiErrorResponse("OpenAI API key not configured. Save it under Admin > AI assistant settings.");
     }

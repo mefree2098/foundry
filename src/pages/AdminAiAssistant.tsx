@@ -25,6 +25,7 @@ import type { SiteConfig } from "../lib/types";
 
 type Personality = { id: string; name: string; prompt: string };
 type OpenAiAuthMode = "apiKey" | "codexPath";
+type CodexHomeProfile = "auto" | "azure" | "aws" | "local" | "custom";
 
 const PERSONALITY_PRESETS: Personality[] = [
   {
@@ -58,6 +59,41 @@ const PERSONALITY_PRESETS: Personality[] = [
       "Tone: cautious and change-controlled. Before proposing destructive actions, ask for confirmation in assistantMessage and return no actions. Prefer small incremental patches.",
   },
 ];
+
+const DEFAULT_AWS_VOLUME_ROOT = "/mnt/efs";
+
+function normalizeAwsVolumeRoot(value?: string) {
+  const trimmed = (value || "").trim();
+  const fallback = trimmed || DEFAULT_AWS_VOLUME_ROOT;
+  return fallback.replace(/\/+$/, "") || DEFAULT_AWS_VOLUME_ROOT;
+}
+
+function inferProfileFromCodexHome(codexHome?: string): CodexHomeProfile {
+  const path = (codexHome || "").trim().toLowerCase();
+  if (!path) return "auto";
+  if (path.startsWith("/home/site/.codex")) return "azure";
+  if (path === ".codex-home" || path.endsWith("/.codex-home")) return "local";
+  if (path.includes("/.codex/") && (path.startsWith("/mnt/") || path.startsWith("/data/"))) return "aws";
+  return "custom";
+}
+
+function getDefaultProfileFromLocation(): CodexHomeProfile {
+  if (typeof window === "undefined") return "auto";
+  const host = (window.location.hostname || "").toLowerCase();
+  if (host === "localhost" || host === "127.0.0.1") return "local";
+  return "azure";
+}
+
+function getCodexHomeForProfile(profile: CodexHomeProfile, awsVolumeRoot: string) {
+  if (profile === "azure") return "/home/site/.codex/ntechr";
+  if (profile === "aws") return `${normalizeAwsVolumeRoot(awsVolumeRoot)}/.codex/ntechr`;
+  if (profile === "local") return ".codex-home";
+  if (profile === "auto") {
+    const fallback = getDefaultProfileFromLocation();
+    return getCodexHomeForProfile(fallback === "auto" ? "azure" : fallback, awsVolumeRoot);
+  }
+  return "";
+}
 
 function slugify(input: string) {
   return input
@@ -171,6 +207,8 @@ function AdminAiAssistant() {
   const [authMode, setAuthMode] = useState<OpenAiAuthMode>("apiKey");
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [codexPathDraft, setCodexPathDraft] = useState("");
+  const [codexHomeProfile, setCodexHomeProfile] = useState<CodexHomeProfile>("auto");
+  const [codexAwsVolumeRootDraft, setCodexAwsVolumeRootDraft] = useState(DEFAULT_AWS_VOLUME_ROOT);
   const [codexHomeDraft, setCodexHomeDraft] = useState("");
   const [codexPendingLoginId, setCodexPendingLoginId] = useState("");
   const [codexCallbackDraft, setCodexCallbackDraft] = useState("");
@@ -211,6 +249,17 @@ function AdminAiAssistant() {
     const cfgImageOutputFormat = config.ai?.adminAssistant?.openai?.imageOutputFormat;
     const cfgCodexPath = config.ai?.adminAssistant?.openai?.codexPath;
     const cfgCodexHome = config.ai?.adminAssistant?.openai?.codexHome;
+    const cfgCodexHomeProfile = config.ai?.adminAssistant?.openai?.codexHomeProfile;
+    const cfgCodexAwsVolumeRoot = config.ai?.adminAssistant?.openai?.codexAwsVolumeRoot;
+    const normalizedAwsRoot = normalizeAwsVolumeRoot(cfgCodexAwsVolumeRoot);
+    const nextProfile =
+      cfgCodexHomeProfile === "auto" ||
+      cfgCodexHomeProfile === "azure" ||
+      cfgCodexHomeProfile === "aws" ||
+      cfgCodexHomeProfile === "local" ||
+      cfgCodexHomeProfile === "custom"
+        ? cfgCodexHomeProfile
+        : inferProfileFromCodexHome(cfgCodexHome) || "auto";
     setAuthMode(cfgAuthMode === "codexPath" ? "codexPath" : "apiKey");
     setModel((cfgModel && cfgModel.trim()) || (cfgAuthMode === "codexPath" ? "gpt-5.1-codex" : "gpt-4o-mini"));
     setImageModel((cfgImageModel && cfgImageModel.trim()) || "gpt-image-1.5");
@@ -219,12 +268,24 @@ function AdminAiAssistant() {
     setImageBackground((cfgImageBackground as any) || "auto");
     setImageOutputFormat((cfgImageOutputFormat as any) || "png");
     setCodexPathDraft((cfgCodexPath && cfgCodexPath.trim()) || "");
-    setCodexHomeDraft((cfgCodexHome && cfgCodexHome.trim()) || "");
+    setCodexHomeProfile(nextProfile);
+    setCodexAwsVolumeRootDraft(normalizedAwsRoot);
+    if ((cfgCodexHome && cfgCodexHome.trim()) || nextProfile === "custom") {
+      setCodexHomeDraft((cfgCodexHome && cfgCodexHome.trim()) || "");
+    } else {
+      setCodexHomeDraft(getCodexHomeForProfile(nextProfile, normalizedAwsRoot));
+    }
     setCodexPendingLoginId("");
     setCodexCallbackDraft("");
     setApiKeyDraft("");
     setClearStoredKey(false);
   }, [config]);
+
+  useEffect(() => {
+    if (authMode !== "codexPath") return;
+    if (codexHomeProfile === "custom") return;
+    setCodexHomeDraft(getCodexHomeForProfile(codexHomeProfile, codexAwsVolumeRootDraft));
+  }, [authMode, codexHomeProfile, codexAwsVolumeRootDraft]);
 
   const context = useMemo(() => {
     const configSummary = summarizeConfigForAi(config);
@@ -236,12 +297,15 @@ function AdminAiAssistant() {
     };
   }, [config, platforms, topics, news]);
 
+  const effectiveCodexHomeDraft =
+    codexHomeProfile === "custom" ? codexHomeDraft.trim() : getCodexHomeForProfile(codexHomeProfile, codexAwsVolumeRootDraft).trim();
+
   const codexModelsQuery = useQuery({
-    queryKey: ["ai", "codex-models", authMode],
+    queryKey: ["ai", "codex-models", authMode, codexPathDraft.trim(), effectiveCodexHomeDraft],
     queryFn: () =>
       fetchCodexModels({
         codexPath: codexPathDraft.trim() || undefined,
-        codexHome: codexHomeDraft.trim() || undefined,
+        codexHome: effectiveCodexHomeDraft || undefined,
       }),
     enabled: authMode === "codexPath",
     staleTime: 5 * 60 * 1000,
@@ -307,7 +371,7 @@ function AdminAiAssistant() {
         loginId: loginId || undefined,
         callbackUrl,
         codexPath: codexPathDraft.trim() || undefined,
-        codexHome: codexHomeDraft.trim() || undefined,
+        codexHome: effectiveCodexHomeDraft || undefined,
       });
     },
     onSuccess: async () => {
@@ -337,7 +401,7 @@ function AdminAiAssistant() {
     try {
       payload = await fetchCodexModels({
         codexPath: codexPathDraft.trim() || undefined,
-        codexHome: codexHomeDraft.trim() || undefined,
+        codexHome: effectiveCodexHomeDraft || undefined,
         startLogin: true,
       });
       queryClient.setQueryData(["ai", "codex-models", authMode], payload);
@@ -366,6 +430,10 @@ function AdminAiAssistant() {
   const saveOpenAiSettings = useMutation({
     mutationFn: async () => {
       const base = config || ({ id: "global" } as any);
+      const effectiveCodexHome =
+        codexHomeProfile === "custom"
+          ? codexHomeDraft
+          : getCodexHomeForProfile(codexHomeProfile, codexAwsVolumeRootDraft);
       const openaiPatch: any = {
         authMode,
         model: model.trim() || (authMode === "codexPath" ? "gpt-5.1-codex" : "gpt-4o-mini"),
@@ -375,7 +443,9 @@ function AdminAiAssistant() {
         imageBackground,
         imageOutputFormat,
         codexPath: codexPathDraft,
-        codexHome: codexHomeDraft,
+        codexHome: effectiveCodexHome,
+        codexHomeProfile,
+        codexAwsVolumeRoot: codexHomeProfile === "aws" ? normalizeAwsVolumeRoot(codexAwsVolumeRootDraft) : undefined,
       };
       if (clearStoredKey) {
         openaiPatch.clearApiKey = true;
@@ -496,7 +566,9 @@ function AdminAiAssistant() {
   const send = async () => {
     const content = draft.trim();
     if (!content) return;
-    if (configuredAuthMode === "apiKey" && !hasStoredKey) {
+    const selectedAuthMode: OpenAiAuthMode = authMode;
+    const inlineApiKey = apiKeyDraft.trim();
+    if (selectedAuthMode === "apiKey" && !hasStoredKey && !inlineApiKey) {
       alert("No OpenAI API key saved yet. Save it under OpenAI settings first.");
       return;
     }
@@ -523,7 +595,15 @@ function AdminAiAssistant() {
     };
 
     try {
-      const res = await aiChat({ messages: nextMessages.slice(-10), context });
+      const res = await aiChat({
+        authMode: selectedAuthMode,
+        apiKey: selectedAuthMode === "apiKey" ? inlineApiKey || undefined : undefined,
+        codexPath: selectedAuthMode === "codexPath" ? codexPathDraft.trim() || undefined : undefined,
+        codexHome: selectedAuthMode === "codexPath" ? effectiveCodexHomeDraft || undefined : undefined,
+        model: model.trim() || undefined,
+        messages: nextMessages.slice(-10),
+        context,
+      });
       finalizeAssistant(String(res.assistantMessage || ""), res.actions || []);
     } catch (err) {
       const message = err instanceof Error ? err.message : "AI request failed";
@@ -547,7 +627,7 @@ function AdminAiAssistant() {
                     : "Auth mode: API key. No API key saved yet."
                   : hasStoredCodexPath
                     ? "Auth mode: Codex subscription. Codex path is saved."
-                    : "Auth mode: Codex subscription. Using PATH lookup unless you set a codex path."}{" "}
+                    : "Auth mode: Codex subscription. Using PATH lookup unless you set a codex path. Codex home is auto-managed."}{" "}
                 {!authModeSaved ? "Not saved yet. " : ""}
                 Leave API key blank to keep the stored key.
               </div>
@@ -579,12 +659,39 @@ function AdminAiAssistant() {
               value={codexPathDraft}
               onChange={(e) => setCodexPathDraft(e.target.value)}
             />
-            <input
-              className="input-field"
-              placeholder="Codex home (optional, keeps subscription login state)"
-              value={codexHomeDraft}
-              onChange={(e) => setCodexHomeDraft(e.target.value)}
-            />
+            <select className="input-field" value={codexHomeProfile} onChange={(e) => setCodexHomeProfile(e.target.value as CodexHomeProfile)}>
+              <option value="auto">Codex home profile: Auto (recommended)</option>
+              <option value="azure">Codex home profile: Azure App Service</option>
+              <option value="aws">Codex home profile: AWS (persistent volume)</option>
+              <option value="local">Codex home profile: Local development</option>
+              <option value="custom">Codex home profile: Custom path</option>
+            </select>
+            {codexHomeProfile === "aws" ? (
+              <input
+                className="input-field"
+                placeholder="AWS persistent volume root (e.g., /mnt/efs)"
+                value={codexAwsVolumeRootDraft}
+                onChange={(e) => setCodexAwsVolumeRootDraft(e.target.value)}
+              />
+            ) : (
+              <input
+                className="input-field"
+                placeholder={codexHomeProfile === "custom" ? "Codex home (custom path)" : "Codex home (auto-generated from profile)"}
+                value={codexHomeProfile === "custom" ? codexHomeDraft : effectiveCodexHomeDraft}
+                onChange={(e) => setCodexHomeDraft(e.target.value)}
+                disabled={codexHomeProfile !== "custom"}
+              />
+            )}
+            {authMode === "codexPath" ? (
+              <div className="md:col-span-2 text-xs text-slate-300">
+                Codex home used for requests: <span className="font-mono">{effectiveCodexHomeDraft || "(auto default)"}</span>
+              </div>
+            ) : null}
+            {authMode === "codexPath" && codexHomeProfile === "aws" ? (
+              <div className="md:col-span-2 text-xs text-slate-300">
+                AWS profile needs a shared persistent volume mount root (for example EFS) so login state survives across workers.
+              </div>
+            ) : null}
             {authMode === "codexPath" ? (
               <div className="md:col-span-2 space-y-2">
                 <select className="input-field" value={model} onChange={(e) => setModel(e.target.value)} disabled={codexModelsQuery.isLoading}>

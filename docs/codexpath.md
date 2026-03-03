@@ -43,6 +43,8 @@ For a persisted config object (example path: `ai.adminAssistant.openai`), add:
   "clearApiKey": false,
   "codexPath": "optional path to binary, fallback to bundled `@openai/codex` (then `codex`)",
   "codexHome": "optional isolated state directory",
+  "codexHomeProfile": "auto | azure | aws | local | custom",
+  "codexAwsVolumeRoot": "optional AWS persistent volume mount root (for aws profile, e.g. /mnt/efs)",
   "hasCodexPath": true,
   "model": "mode-specific default model"
 }
@@ -54,6 +56,7 @@ Notes:
 - Compute `hasApiKey`/`hasCodexPath` flags server-side.
 - Trim incoming strings and normalize empty strings to `undefined`.
 - Keep legacy API key behavior unchanged.
+- If `codexHome` is blank, derive it from `codexHomeProfile` server-side (do not force end users to type filesystem paths).
 
 ---
 
@@ -242,6 +245,9 @@ When `authMode === "codexPath"`:
 - show a "Refresh model list" button
 - if `loginRequired`, show clickable login URL
 - always show an explicit primary button: **"Sign in to OpenAI"** (do not hide login behind errors)
+- render a **deployment profile selector** for Codex home path (`auto`, `azure`, `aws`, `local`, `custom`)
+- auto-populate `codexHome` from selected profile (only editable in `custom`)
+- for `aws` profile, show an extra input for persistent volume root and derive `codexHome` from it
 - auto-select `isDefault` model if current model is missing
 - keep a fallback "custom current model" option if persisted model is not in list
 

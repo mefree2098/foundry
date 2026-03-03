@@ -5,6 +5,7 @@ import { completeCodexLoginRelay, completeCodexLoginViaCallback } from "../codex
 import { database } from "../client.js";
 import { containers } from "../cosmos.js";
 import { siteConfigSchema } from "../types/content.js";
+import { deriveCodexHomeFromProfile } from "../codex/homeProfile.js";
 
 const requestSchema = z.object({
   loginId: z.string().min(1).optional(),
@@ -26,6 +27,8 @@ async function getStoredCodexSettings() {
     return {
       codexPath: typeof openai?.codexPath === "string" ? openai.codexPath : undefined,
       codexHome: typeof openai?.codexHome === "string" ? openai.codexHome : undefined,
+      codexHomeProfile: typeof openai?.codexHomeProfile === "string" ? openai.codexHomeProfile : undefined,
+      codexAwsVolumeRoot: typeof openai?.codexAwsVolumeRoot === "string" ? openai.codexAwsVolumeRoot : undefined,
     };
   } catch {
     return {};
@@ -51,7 +54,8 @@ async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext
 
   const stored = await getStoredCodexSettings();
   const finalCodexPath = (parsed.data.codexPath || stored.codexPath || process.env.CODEX_PATH || "codex").trim();
-  const finalCodexHome = (parsed.data.codexHome || stored.codexHome || process.env.CODEX_HOME || "").trim() || undefined;
+  const fallbackFromProfile = deriveCodexHomeFromProfile(stored.codexHomeProfile, stored.codexAwsVolumeRoot);
+  const finalCodexHome = (parsed.data.codexHome || stored.codexHome || fallbackFromProfile || process.env.CODEX_HOME || "").trim() || undefined;
   const loginId = (parsed.data.loginId || "").trim();
   let relayErrorMessage = "";
 

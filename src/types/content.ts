@@ -266,6 +266,8 @@ export const siteConfigSchema = z.object({
               imageOutputFormat: z.string().optional(),
               codexPath: z.string().optional(),
               codexHome: z.string().optional(),
+              codexHomeProfile: z.enum(["auto", "azure", "aws", "local", "custom"]).optional(),
+              codexAwsVolumeRoot: z.string().optional(),
               apiKey: z.string().optional(),
               hasApiKey: z.boolean().optional(),
               hasCodexPath: z.boolean().optional(),

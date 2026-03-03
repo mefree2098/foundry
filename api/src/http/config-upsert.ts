@@ -50,6 +50,12 @@ async function upsertConfig(req: HttpRequest, context: InvocationContext): Promi
   if (typeof mergedOpenAi.authMode === "string" && mergedOpenAi.authMode !== "apiKey" && mergedOpenAi.authMode !== "codexPath") {
     delete mergedOpenAi.authMode;
   }
+  if (
+    typeof mergedOpenAi.codexHomeProfile === "string" &&
+    !["auto", "azure", "aws", "local", "custom"].includes(mergedOpenAi.codexHomeProfile)
+  ) {
+    delete mergedOpenAi.codexHomeProfile;
+  }
   if (typeof mergedOpenAi.apiKey === "string") {
     const trimmed = mergedOpenAi.apiKey.trim();
     mergedOpenAi.apiKey = trimmed || undefined;
@@ -61,6 +67,13 @@ async function upsertConfig(req: HttpRequest, context: InvocationContext): Promi
   if (typeof mergedOpenAi.codexHome === "string") {
     const trimmed = mergedOpenAi.codexHome.trim();
     mergedOpenAi.codexHome = trimmed || undefined;
+  }
+  if (typeof mergedOpenAi.codexAwsVolumeRoot === "string") {
+    const trimmed = mergedOpenAi.codexAwsVolumeRoot.trim().replace(/\/+$/, "");
+    mergedOpenAi.codexAwsVolumeRoot = trimmed || undefined;
+  }
+  if (mergedOpenAi.codexHomeProfile !== "aws") {
+    mergedOpenAi.codexAwsVolumeRoot = undefined;
   }
   mergedOpenAi.hasApiKey = Boolean(typeof mergedOpenAi.apiKey === "string" && mergedOpenAi.apiKey.trim());
   mergedOpenAi.hasCodexPath = Boolean(typeof mergedOpenAi.codexPath === "string" && mergedOpenAi.codexPath.trim());

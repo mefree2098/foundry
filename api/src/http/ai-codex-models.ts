@@ -4,6 +4,7 @@ import { database } from "../client.js";
 import { containers } from "../cosmos.js";
 import { siteConfigSchema } from "../types/content.js";
 import { CodexLoginRequiredError, listCodexModels, startCodexLoginRelay } from "../codex/appServer.js";
+import { deriveCodexHomeFromProfile } from "../codex/homeProfile.js";
 
 function parseBoolean(value: string | null): boolean {
   if (!value) return false;
@@ -24,6 +25,8 @@ async function getStoredCodexSettings() {
     return {
       codexPath: typeof openai?.codexPath === "string" ? openai.codexPath : undefined,
       codexHome: typeof openai?.codexHome === "string" ? openai.codexHome : undefined,
+      codexHomeProfile: typeof openai?.codexHomeProfile === "string" ? openai.codexHomeProfile : undefined,
+      codexAwsVolumeRoot: typeof openai?.codexAwsVolumeRoot === "string" ? openai.codexAwsVolumeRoot : undefined,
     };
   } catch {
     return {};
@@ -43,7 +46,8 @@ async function aiCodexModels(req: HttpRequest, context: InvocationContext): Prom
 
   const stored = await getStoredCodexSettings();
   const finalCodexPath = (queryPath || stored.codexPath || process.env.CODEX_PATH || "codex").trim();
-  const finalCodexHome = (queryHome || stored.codexHome || process.env.CODEX_HOME || "").trim() || undefined;
+  const fallbackFromProfile = deriveCodexHomeFromProfile(stored.codexHomeProfile, stored.codexAwsVolumeRoot);
+  const finalCodexHome = (queryHome || stored.codexHome || fallbackFromProfile || process.env.CODEX_HOME || "").trim() || undefined;
 
   try {
     const models = await listCodexModels({
