@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { InvocationContext } from "@azure/functions";
+import type { Container } from "@azure/cosmos";
 
 const DEFAULT_CODEX_RPC_TIMEOUT_MS = Number(process.env.CODEX_RPC_TIMEOUT_MS || 45000);
 const DEFAULT_CODEX_TURN_TIMEOUT_MS = Number(process.env.CODEX_TURN_TIMEOUT_MS || 180000);
@@ -121,10 +122,65 @@ type PendingCodexLogin = {
   expiresAt: number;
   session: CodexAppServerSession;
   completion: Promise<void>;
+  stopRemoteTaskPump?: () => void;
+};
+
+type CodexLoginSessionDoc = {
+  id: string;
+  type: "codex-login-session";
+  ownerId: string;
+  loginKey: string;
+  instanceId: string;
+  expiresAt: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type CodexLoginTaskDoc = {
+  id: string;
+  type: "codex-login-task";
+  ownerId: string;
+  loginKey: string;
+  taskId: string;
+  callbackUrlOrQuery: string;
+  status: "pending" | "success" | "error";
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 const requireFromHere = createRequire(import.meta.url);
 const pendingCodexLogins = new Map<string, PendingCodexLogin>();
+let cachedCoordinationContainerPromise: Promise<Container | null> | null = null;
+
+async function getCodexLoginCoordinationContainer() {
+  if (cachedCoordinationContainerPromise) return cachedCoordinationContainerPromise;
+  cachedCoordinationContainerPromise = (async () => {
+    try {
+      const [{ database }, { containers }] = await Promise.all([import("../client.js"), import("../cosmos.js")]);
+      return database.container(containers.config);
+    } catch {
+      return null;
+    }
+  })();
+  return cachedCoordinationContainerPromise;
+}
+
+function codexLoginSessionDocId(loginKey: string) {
+  return `codex-login-session:${loginKey}`;
+}
+
+function codexLoginTaskDocId(loginKey: string) {
+  return `codex-login-task:${loginKey}`;
+}
+
+function codexInstanceId() {
+  return (
+    (process.env.WEBSITE_INSTANCE_ID || "").trim() ||
+    (process.env.WEBSITE_HOSTNAME || "").trim() ||
+    `pid-${process.pid}`
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -281,7 +337,12 @@ function findPendingLogin(loginKey: string, ownerId?: string) {
   return null;
 }
 
-async function closePendingLogin(entry: PendingCodexLogin) {
+async function closePendingLogin(entry: PendingCodexLogin, options?: { keepTaskDoc?: boolean }) {
+  entry.stopRemoteTaskPump?.();
+  if (!options?.keepTaskDoc) {
+    await deleteCodexLoginTaskDoc(entry.loginKey);
+  }
+  await deleteCodexLoginSessionDoc(entry.loginKey);
   try {
     await entry.session.close();
   } catch {
@@ -368,6 +429,86 @@ function hasCodexAccount(payload: unknown) {
   const account = isRecord(payload.account) ? payload.account : null;
   const accountType = account && typeof account.type === "string" ? account.type : "";
   return Boolean(accountType);
+}
+
+async function readCodexLoginSessionDoc(loginKey: string): Promise<CodexLoginSessionDoc | null> {
+  const container = await getCodexLoginCoordinationContainer();
+  if (!container) return null;
+  const id = codexLoginSessionDocId(loginKey);
+  try {
+    const { resource } = await container.item(id, id).read<CodexLoginSessionDoc>();
+    if (!resource || resource.type !== "codex-login-session") return null;
+    return resource;
+  } catch {
+    return null;
+  }
+}
+
+async function upsertCodexLoginSessionDoc(options: { ownerId: string; loginKey: string; expiresAt: number }) {
+  const container = await getCodexLoginCoordinationContainer();
+  if (!container) return;
+  const now = new Date().toISOString();
+  const id = codexLoginSessionDocId(options.loginKey);
+  const doc: CodexLoginSessionDoc = {
+    id,
+    type: "codex-login-session",
+    ownerId: options.ownerId,
+    loginKey: options.loginKey,
+    instanceId: codexInstanceId(),
+    expiresAt: options.expiresAt,
+    createdAt: now,
+    updatedAt: now,
+  };
+  try {
+    await container.items.upsert(doc);
+  } catch {
+    // Best-effort: coordination fallback unavailable.
+  }
+}
+
+async function deleteCodexLoginSessionDoc(loginKey: string) {
+  const container = await getCodexLoginCoordinationContainer();
+  if (!container) return;
+  const id = codexLoginSessionDocId(loginKey);
+  try {
+    await container.item(id, id).delete();
+  } catch {
+    // Ignore missing docs / best effort cleanup.
+  }
+}
+
+async function readCodexLoginTaskDoc(loginKey: string): Promise<CodexLoginTaskDoc | null> {
+  const container = await getCodexLoginCoordinationContainer();
+  if (!container) return null;
+  const id = codexLoginTaskDocId(loginKey);
+  try {
+    const { resource } = await container.item(id, id).read<CodexLoginTaskDoc>();
+    if (!resource || resource.type !== "codex-login-task") return null;
+    return resource;
+  } catch {
+    return null;
+  }
+}
+
+async function upsertCodexLoginTaskDoc(doc: CodexLoginTaskDoc) {
+  const container = await getCodexLoginCoordinationContainer();
+  if (!container) return;
+  try {
+    await container.items.upsert(doc);
+  } catch {
+    // Best-effort write; caller will handle timeout if coordination fails.
+  }
+}
+
+async function deleteCodexLoginTaskDoc(loginKey: string) {
+  const container = await getCodexLoginCoordinationContainer();
+  if (!container) return;
+  const id = codexLoginTaskDocId(loginKey);
+  try {
+    await container.item(id, id).delete();
+  } catch {
+    // Ignore missing docs / best effort cleanup.
+  }
 }
 
 function parseStringArray(value: unknown): string[] {
@@ -904,6 +1045,166 @@ export function buildCodexTurnInput(messages: Array<{ role: "user" | "assistant"
   return buildInputText(messages);
 }
 
+function isRecoverableRelayError(message: string) {
+  const lowered = message.toLowerCase();
+  return (
+    lowered.includes("status 400") ||
+    lowered.includes("timed out waiting for codex login completion") ||
+    lowered.includes("missing authorization code") ||
+    lowered.includes("missing state parameter")
+  );
+}
+
+async function forwardPendingLoginCallback(
+  pending: PendingCodexLogin,
+  callbackUrlOrQuery: string,
+  completionTimeoutMs?: number,
+) {
+  const callbackParams = parseCallbackParams(callbackUrlOrQuery);
+  if (!callbackParams.get("code")) {
+    throw new Error("Missing authorization code. Paste the full localhost callback URL after login.");
+  }
+  if (!callbackParams.get("state")) {
+    throw new Error("Missing state parameter. Paste the full localhost callback URL after login.");
+  }
+
+  const relayCallback = new URL(pending.callbackUrl);
+  for (const key of Array.from(relayCallback.searchParams.keys())) {
+    relayCallback.searchParams.delete(key);
+  }
+  for (const [key, value] of callbackParams.entries()) {
+    relayCallback.searchParams.set(key, value);
+  }
+
+  const forwarded = await fetch(relayCallback.toString(), {
+    method: "GET",
+    redirect: "manual",
+  });
+  if (forwarded.status >= 400) {
+    throw new Error(`Codex callback relay failed with status ${forwarded.status}.`);
+  }
+
+  const waitMs = Number.isFinite(completionTimeoutMs) ? Number(completionTimeoutMs) : DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS;
+  await waitWithTimeout(
+    pending.completion,
+    waitMs,
+    "Timed out waiting for Codex login completion. Try again and repaste the callback URL.",
+  );
+}
+
+async function enqueueRemoteCodexLoginCallback(options: {
+  ownerId: string;
+  loginKey: string;
+  callbackUrlOrQuery: string;
+  completionTimeoutMs?: number;
+  context?: InvocationContext;
+}) {
+  const callbackParams = parseCallbackParams(options.callbackUrlOrQuery);
+  if (!callbackParams.get("code")) {
+    throw new Error("Missing authorization code. Paste the full localhost callback URL after login.");
+  }
+  if (!callbackParams.get("state")) {
+    throw new Error("Missing state parameter. Paste the full localhost callback URL after login.");
+  }
+
+  const sessionDoc = await readCodexLoginSessionDoc(options.loginKey);
+  if (!sessionDoc) {
+    throw new Error("No pending Codex login session found. Start login again.");
+  }
+  if (sessionDoc.ownerId !== options.ownerId) {
+    throw new Error("Pending Codex login session belongs to a different user.");
+  }
+  if (sessionDoc.expiresAt <= Date.now()) {
+    await Promise.allSettled([deleteCodexLoginSessionDoc(options.loginKey), deleteCodexLoginTaskDoc(options.loginKey)]);
+    throw new Error("Pending Codex login session expired. Start login again.");
+  }
+
+  const now = new Date().toISOString();
+  const taskId = randomUUID();
+  await upsertCodexLoginTaskDoc({
+    id: codexLoginTaskDocId(options.loginKey),
+    type: "codex-login-task",
+    ownerId: options.ownerId,
+    loginKey: options.loginKey,
+    taskId,
+    callbackUrlOrQuery: options.callbackUrlOrQuery,
+    status: "pending",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const timeoutMs = Number.isFinite(options.completionTimeoutMs)
+    ? Number(options.completionTimeoutMs)
+    : DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS;
+  const deadline = Date.now() + Math.max(1000, timeoutMs + 5000);
+
+  for (;;) {
+    const taskDoc = await readCodexLoginTaskDoc(options.loginKey);
+    if (taskDoc && taskDoc.taskId === taskId) {
+      if (taskDoc.status === "success") {
+        await deleteCodexLoginTaskDoc(options.loginKey);
+        return;
+      }
+      if (taskDoc.status === "error") {
+        throw new Error(taskDoc.error || "Codex login relay task failed.");
+      }
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for Codex login relay completion on owning server instance.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+}
+
+function startRemoteTaskPumpForPendingLogin(
+  pending: PendingCodexLogin,
+  options?: { context?: InvocationContext; completionTimeoutMs?: number },
+) {
+  let running = false;
+  let lastHandledTaskId = "";
+  const timer = setInterval(async () => {
+    if (running) return;
+    running = true;
+    try {
+      const task = await readCodexLoginTaskDoc(pending.loginKey);
+      if (!task || task.status !== "pending") return;
+      if (task.taskId === lastHandledTaskId) return;
+      if (task.ownerId !== pending.ownerId) return;
+      lastHandledTaskId = task.taskId;
+
+      try {
+        await forwardPendingLoginCallback(pending, task.callbackUrlOrQuery, options?.completionTimeoutMs);
+        await upsertCodexLoginTaskDoc({
+          ...task,
+          status: "success",
+          error: undefined,
+          updatedAt: new Date().toISOString(),
+        });
+        pendingCodexLogins.delete(pendingLoginMapKey(pending.ownerId, pending.loginKey));
+        await closePendingLogin(pending, { keepTaskDoc: true });
+      } catch (error) {
+        const message = toErrorMessage(error);
+        await upsertCodexLoginTaskDoc({
+          ...task,
+          status: "error",
+          error: message,
+          updatedAt: new Date().toISOString(),
+        });
+        if (!isRecoverableRelayError(message)) {
+          options?.context?.log(`Codex remote relay unrecoverable error; closing pending login ${pending.loginKey}: ${message}`);
+          pendingCodexLogins.delete(pendingLoginMapKey(pending.ownerId, pending.loginKey));
+          await closePendingLogin(pending);
+        }
+      }
+    } finally {
+      running = false;
+    }
+  }, 350);
+
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions): Promise<StartedCodexLoginRelay | null> {
   cleanupExpiredPendingLogins();
   const ownerId = options.ownerId.trim();
@@ -989,6 +1290,12 @@ export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions)
       completion,
     };
     pendingCodexLogins.set(pendingLoginMapKey(ownerId, loginKey), pending);
+    pending.stopRemoteTaskPump = startRemoteTaskPumpForPendingLogin(pending, {
+      context: options.context,
+      completionTimeoutMs: DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS,
+    });
+    await upsertCodexLoginSessionDoc({ ownerId, loginKey, expiresAt });
+    await deleteCodexLoginTaskDoc(loginKey);
 
     return {
       loginKey,
@@ -1013,7 +1320,14 @@ export async function completeCodexLoginRelay(options: CompleteCodexLoginRelayOp
 
   const found = findPendingLogin(loginKey, ownerId);
   if (!found) {
-    throw new Error("No pending Codex login session found. Start login again.");
+    await enqueueRemoteCodexLoginCallback({
+      ownerId,
+      loginKey,
+      callbackUrlOrQuery: options.callbackUrlOrQuery,
+      completionTimeoutMs: options.completionTimeoutMs,
+      context: options.context,
+    });
+    return;
   }
   const { mapKey, pending } = found;
   if (!found.ownerMatched) {
@@ -1025,46 +1339,11 @@ export async function completeCodexLoginRelay(options: CompleteCodexLoginRelayOp
     throw new Error("Pending Codex login session expired. Start login again.");
   }
 
-  const callbackParams = parseCallbackParams(options.callbackUrlOrQuery);
-  if (!callbackParams.get("code")) {
-    throw new Error("Missing authorization code. Paste the full localhost callback URL after login.");
-  }
-  if (!callbackParams.get("state")) {
-    throw new Error("Missing state parameter. Paste the full localhost callback URL after login.");
-  }
-
-  const relayCallback = new URL(pending.callbackUrl);
-  for (const key of Array.from(relayCallback.searchParams.keys())) {
-    relayCallback.searchParams.delete(key);
-  }
-  for (const [key, value] of callbackParams.entries()) {
-    relayCallback.searchParams.set(key, value);
-  }
-
   try {
-    const forwarded = await fetch(relayCallback.toString(), {
-      method: "GET",
-      redirect: "manual",
-    });
-    if (forwarded.status >= 400) {
-      throw new Error(`Codex callback relay failed with status ${forwarded.status}.`);
-    }
-
-    const completionTimeoutMs = Number.isFinite(options.completionTimeoutMs)
-      ? Number(options.completionTimeoutMs)
-      : DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS;
-    await waitWithTimeout(
-      pending.completion,
-      completionTimeoutMs,
-      "Timed out waiting for Codex login completion. Try again and repaste the callback URL.",
-    );
+    await forwardPendingLoginCallback(pending, options.callbackUrlOrQuery, options.completionTimeoutMs);
   } catch (error) {
-    const message = toErrorMessage(error).toLowerCase();
-    const keepPending =
-      message.includes("status 400") ||
-      message.includes("timed out waiting for codex login completion") ||
-      message.includes("missing authorization code") ||
-      message.includes("missing state parameter");
+    const message = toErrorMessage(error);
+    const keepPending = isRecoverableRelayError(message);
     if (!keepPending) {
       pendingCodexLogins.delete(mapKey);
       await closePendingLogin(pending);

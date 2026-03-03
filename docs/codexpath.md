@@ -211,6 +211,7 @@ Implement a dedicated API endpoint, for example:
   - `startLogin` (explicitly starts a pending login relay session)
 - `POST /api/ai/codex-login/complete` for pasted localhost callback URL relay
   - `loginId` should be optional in request payload; use it when available for in-memory relay, but support callback-only completion when missing/stale
+  - in multi-worker deployments, persist ephemeral relay session/task docs in shared storage (for example Cosmos) so completion can be handed back to the owning worker
 
 Return a simple UI-ready shape:
 
@@ -275,7 +276,12 @@ For hosted web apps, add explicit localhost-callback completion UX:
    - replay fallback: start a fresh Codex login listener and replay pasted callback params into that listener
 7. Keep pending session alive on recoverable callback errors (for example callback HTTP 400 or completion timeout) so users can retry without restarting login.
 8. If owner matching fails for pending login lookup, allow login-key fallback lookup (UUID is unguessable and avoids false mismatches).
-9. Refresh model list after completion.
+9. For multi-worker hosting, add cross-instance completion coordination:
+   - on login start, persist a session locator doc (`loginKey -> owning instance`) in shared storage
+   - if complete hits a different worker and local pending map misses, enqueue a completion task in shared storage
+   - the owning instance (holding the live Codex process) polls and executes the task, then writes success/error status
+   - the complete endpoint waits on task result and returns the owning-instance outcome
+10. Refresh model list after completion.
 
 Recommended copy in Codex mode:
 
@@ -305,6 +311,8 @@ Useful env vars:
 - app-level override (example): `CODEX_TIMEOUT_MS`
 
 Capture a stderr tail from Codex process and append it to errors for easier debugging.
+
+If you deploy with multiple workers/instances, ensure the cross-instance login relay storage is available (shared DB/container). Without it, `start`/`complete` can land on different workers and fail with "No pending session".
 
 ### 11.1 Runtime packaging requirement (required)
 
