@@ -77,7 +77,8 @@ async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext
     } catch (error) {
       relayErrorMessage = error instanceof Error ? error.message : String(error);
       context.log(`ai-codex-login-complete relay failed: ${relayErrorMessage}`);
-      if (relayErrorMessage.toLowerCase().includes("timed out waiting for codex login completion")) {
+      const relayTimedOut = relayErrorMessage.toLowerCase().includes("timed out waiting for codex login");
+      if (relayTimedOut) {
         try {
           const probe = await probeCodexAuth({
             codexPath: finalCodexPath,

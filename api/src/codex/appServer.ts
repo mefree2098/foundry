@@ -1255,7 +1255,7 @@ function startRemoteTaskPumpForPendingLogin(
 ) {
   let running = false;
   let lastHandledTaskId = "";
-  const timer = setInterval(async () => {
+  const runPump = async () => {
     if (running) return;
     running = true;
     try {
@@ -1292,9 +1292,15 @@ function startRemoteTaskPumpForPendingLogin(
     } finally {
       running = false;
     }
+  };
+
+  // Run once immediately so recently-enqueued tasks do not wait for the first interval tick.
+  void runPump();
+  const timer = setInterval(() => {
+    void runPump();
   }, 350);
 
-  timer.unref?.();
+  // Keep this timer referenced so the owning worker stays alive long enough to process relay tasks.
   return () => clearInterval(timer);
 }
 
