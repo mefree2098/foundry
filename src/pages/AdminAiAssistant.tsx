@@ -313,8 +313,19 @@ function AdminAiAssistant() {
     onSuccess: async () => {
       setCodexCallbackDraft("");
       setCodexPendingLoginId("");
-      await codexModelsQuery.refetch();
-      alert("Codex login completed. Model list refreshed.");
+      const refreshed = await codexModelsQuery.refetch();
+      const payload = refreshed.data;
+      if (payload?.loginRequired) {
+        alert(
+          "Codex callback was accepted, but login is still required on this server worker. Try Refresh model list. If this persists, set/save a shared Codex home path so all workers use the same login state.",
+        );
+        return;
+      }
+      if (payload?.models?.length) {
+        alert(`Codex login completed. ${payload.models.length} model${payload.models.length === 1 ? "" : "s"} loaded.`);
+        return;
+      }
+      alert("Codex login completed, but no models were returned yet. Click Refresh model list.");
     },
     onError: (err: unknown) => {
       alert(err instanceof Error ? err.message : "Failed to complete Codex login");

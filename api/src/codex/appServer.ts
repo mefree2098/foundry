@@ -1090,6 +1090,11 @@ async function forwardPendingLoginCallback(
     waitMs,
     "Timed out waiting for Codex login completion. Try again and repaste the callback URL.",
   );
+
+  const ok = await waitForSessionAuthenticated(pending.session, 7000);
+  if (!ok) {
+    throw new Error("Codex login completion event received, but authenticated account state was not observed.");
+  }
 }
 
 async function enqueueRemoteCodexLoginCallback(options: {
@@ -1271,7 +1276,16 @@ export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions)
       if (method === "account/updated") {
         const authMode = typeof params.authMode === "string" ? params.authMode : "";
         if (authMode === "chatgpt") {
-          resolveCompletion?.();
+          void (async () => {
+            try {
+              const accountRead = await session.request("account/read", { refreshToken: false });
+              if (hasCodexAccount(accountRead)) {
+                resolveCompletion?.();
+              }
+            } catch {
+              // Ignore transient read errors; account/login/completed or timeout will decide outcome.
+            }
+          })();
         }
       }
     });

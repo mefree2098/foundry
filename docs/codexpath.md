@@ -271,6 +271,7 @@ For hosted web apps, add explicit localhost-callback completion UX:
 5. Backend should try relay completion first when pending id exists:
    - forward `code/state` to the pending session callback URL
    - wait for `account/login/completed`
+   - then verify authenticated state via `account/read` before returning success (do not trust `account/updated` alone)
 6. If relay completion fails, fallback to callback-only completion:
    - direct localhost callback forward + auth verification via `account/read`
    - replay fallback: start a fresh Codex login listener and replay pasted callback params into that listener
