@@ -16,6 +16,7 @@ import "./http/email-stats.js";
 import "./http/ai-chat.js";
 import "./http/ai-codex-models.js";
 import "./http/ai-codex-login-complete.js";
+import "./http/ai-codex-auth-health.js";
 import "./http/media-list.js";
 import "./http/image-generate.js";
 import "./http/ai-usage.js";

@@ -7,6 +7,7 @@ import {
   type AiChatMessage,
   type CodexModelPickerItem,
   completeCodexLogin,
+  fetchCodexAuthHealth,
   fetchCodexModels,
   fetchConfig,
   fetchNews,
@@ -212,6 +213,7 @@ function AdminAiAssistant() {
   const [codexHomeDraft, setCodexHomeDraft] = useState("");
   const [codexPendingLoginId, setCodexPendingLoginId] = useState("");
   const [codexCallbackDraft, setCodexCallbackDraft] = useState("");
+  const [codexHealthStatus, setCodexHealthStatus] = useState<string>("");
   const [model, setModel] = useState("gpt-4o-mini");
   const [imageModel, setImageModel] = useState("gpt-image-1.5");
   const [imageSize, setImageSize] = useState("1024x1024");
@@ -287,6 +289,10 @@ function AdminAiAssistant() {
     setCodexHomeDraft(getCodexHomeForProfile(codexHomeProfile, codexAwsVolumeRootDraft));
   }, [authMode, codexHomeProfile, codexAwsVolumeRootDraft]);
 
+  useEffect(() => {
+    setCodexHealthStatus("");
+  }, [authMode, codexPathDraft, codexHomeDraft, codexHomeProfile, codexAwsVolumeRootDraft]);
+
   const context = useMemo(() => {
     const configSummary = summarizeConfigForAi(config);
     return {
@@ -300,8 +306,10 @@ function AdminAiAssistant() {
   const effectiveCodexHomeDraft =
     codexHomeProfile === "custom" ? codexHomeDraft.trim() : getCodexHomeForProfile(codexHomeProfile, codexAwsVolumeRootDraft).trim();
 
+  const codexModelsQueryKey = ["ai", "codex-models", authMode, codexPathDraft.trim(), effectiveCodexHomeDraft] as const;
+
   const codexModelsQuery = useQuery({
-    queryKey: ["ai", "codex-models", authMode, codexPathDraft.trim(), effectiveCodexHomeDraft],
+    queryKey: codexModelsQueryKey,
     queryFn: () =>
       fetchCodexModels({
         codexPath: codexPathDraft.trim() || undefined,
@@ -396,6 +404,45 @@ function AdminAiAssistant() {
     },
   });
 
+  const codexHealthMutation = useMutation({
+    mutationFn: async () =>
+      fetchCodexAuthHealth({
+        codexPath: codexPathDraft.trim() || undefined,
+        codexHome: effectiveCodexHomeDraft || undefined,
+        includeModelProbe: true,
+      }),
+    onSuccess: (health) => {
+      const identity = [health.accountEmail, health.planType].filter(Boolean).join(" / ");
+      const instance = [health.instance?.siteName, health.instance?.instanceId || health.instance?.hostname]
+        .filter(Boolean)
+        .join(" @ ");
+      if (health.authenticated && !health.loginRequired) {
+        setCodexHealthStatus(
+          `Authenticated${identity ? ` (${identity})` : ""}. modelCount=${health.modelCount ?? 0}. codexHome=${health.codexHome || "(none)"}${
+            instance ? ` | ${instance}` : ""
+          }`,
+        );
+        return;
+      }
+      if (health.loginRequired) {
+        setCodexHealthStatus(
+          `Login required. codexHome=${health.codexHome || "(none)"}${instance ? ` | ${instance}` : ""}${
+            health.authUrl ? " | Use Sign in to OpenAI." : ""
+          }`,
+        );
+        return;
+      }
+      setCodexHealthStatus(
+        `Not authenticated. requiresOpenaiAuth=${health.requiresOpenaiAuth}. codexHome=${health.codexHome || "(none)"}${
+          instance ? ` | ${instance}` : ""
+        }`,
+      );
+    },
+    onError: (err: unknown) => {
+      setCodexHealthStatus(err instanceof Error ? `Health check failed: ${err.message}` : "Health check failed.");
+    },
+  });
+
   const openCodexLogin = async () => {
     let payload: Awaited<ReturnType<typeof fetchCodexModels>> | undefined;
     try {
@@ -404,7 +451,7 @@ function AdminAiAssistant() {
         codexHome: effectiveCodexHomeDraft || undefined,
         startLogin: true,
       });
-      queryClient.setQueryData(["ai", "codex-models", authMode], payload);
+      queryClient.setQueryData(codexModelsQueryKey, payload);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to reach Codex backend.";
       alert(`Codex backend error: ${message}`);
@@ -723,6 +770,14 @@ function AdminAiAssistant() {
                   >
                     {codexModelsQuery.isFetching ? "Refreshing models..." : "Refresh model list"}
                   </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => codexHealthMutation.mutate()}
+                    disabled={codexHealthMutation.isPending}
+                  >
+                    {codexHealthMutation.isPending ? "Checking auth health..." : "Check auth persistence"}
+                  </button>
                   <div className="text-xs text-slate-300">
                     {codexModelsQuery.data?.loginRequired ? (
                       <>
@@ -743,6 +798,7 @@ function AdminAiAssistant() {
                     )}
                   </div>
                 </div>
+                {codexHealthStatus ? <div className="text-xs text-slate-300">{codexHealthStatus}</div> : null}
                 {codexModelsQuery.data?.loginRequired ? (
                   <div className="rounded-md border border-slate-500/40 bg-slate-900/30 p-3 space-y-2">
                     <div className="text-xs text-slate-200">

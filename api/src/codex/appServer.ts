@@ -66,6 +66,26 @@ export type ListCodexModelsOptions = {
   context?: InvocationContext;
 };
 
+export type ProbeCodexAuthOptions = {
+  codexPath: string;
+  codexHome?: string;
+  includeModelProbe?: boolean;
+  requestTimeoutMs?: number;
+  context?: InvocationContext;
+};
+
+export type ProbeCodexAuthResult = {
+  authenticated: boolean;
+  requiresOpenaiAuth: boolean;
+  accountType?: string;
+  accountEmail?: string;
+  planType?: string;
+  loginRequired: boolean;
+  authUrl?: string;
+  modelCount?: number;
+  sampleModels?: string[];
+};
+
 export type StartCodexLoginRelayOptions = {
   ownerId: string;
   codexPath: string;
@@ -784,7 +804,7 @@ class CodexAppServerSession {
   }
 
   async ensureAuthenticated() {
-    const accountRead = await this.request("account/read", { refreshToken: false });
+    const accountRead = await this.request("account/read", { refreshToken: true });
     const accountPayload = isRecord(accountRead) ? accountRead : {};
     const account = isRecord(accountPayload.account) ? accountPayload.account : null;
     const requiresAuth = Boolean(accountPayload.requiresOpenaiAuth);
@@ -807,7 +827,7 @@ class CodexAppServerSession {
     | { status: "authenticated" }
     | { status: "login_required"; authUrl: string; loginId?: string; callbackUrl: string }
   > {
-    const accountRead = await this.request("account/read", { refreshToken: false });
+    const accountRead = await this.request("account/read", { refreshToken: true });
     const accountPayload = isRecord(accountRead) ? accountRead : {};
     const account = isRecord(accountPayload.account) ? accountPayload.account : null;
     const requiresAuth = Boolean(accountPayload.requiresOpenaiAuth);
@@ -1278,7 +1298,7 @@ export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions)
         if (authMode === "chatgpt") {
           void (async () => {
             try {
-              const accountRead = await session.request("account/read", { refreshToken: false });
+              const accountRead = await session.request("account/read", { refreshToken: true });
               if (hasCodexAccount(accountRead)) {
                 resolveCompletion?.();
               }
@@ -1384,7 +1404,7 @@ async function checkCodexAuthenticated(options: { codexPath: string; codexHome?:
   );
   try {
     await session.initialize();
-    const result = await session.request("account/read", { refreshToken: false });
+    const result = await session.request("account/read", { refreshToken: true });
     return hasCodexAccount(result);
   } finally {
     await session.close();
@@ -1394,7 +1414,7 @@ async function checkCodexAuthenticated(options: { codexPath: string; codexHome?:
 async function waitForSessionAuthenticated(session: CodexAppServerSession, waitForAuthMs: number) {
   const deadline = Date.now() + Math.max(500, waitForAuthMs);
   for (;;) {
-    const accountRead = await session.request("account/read", { refreshToken: false });
+    const accountRead = await session.request("account/read", { refreshToken: true });
     if (hasCodexAccount(accountRead)) return true;
     if (Date.now() >= deadline) break;
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -1485,6 +1505,68 @@ export async function completeCodexLoginViaCallback(options: CompleteCodexLoginV
 
   const details = [directError, replayError].filter(Boolean).join(" Replay attempt: ");
   throw new Error(`Unable to complete Codex login from callback URL. ${details}`);
+}
+
+export async function probeCodexAuth(options: ProbeCodexAuthOptions): Promise<ProbeCodexAuthResult> {
+  const requestTimeoutMs = Number.isFinite(options.requestTimeoutMs) ? Number(options.requestTimeoutMs) : DEFAULT_CODEX_RPC_TIMEOUT_MS;
+  const session = new CodexAppServerSession(
+    {
+      codexPath: options.codexPath,
+      codexHome: options.codexHome,
+      model: "gpt-5.1-codex",
+      developerInstructions: "",
+      inputText: "",
+      context: options.context,
+    },
+    requestTimeoutMs,
+  );
+
+  try {
+    await session.initialize();
+    const accountRead = await session.request("account/read", { refreshToken: true });
+    const payload = isRecord(accountRead) ? accountRead : {};
+    const account = isRecord(payload.account) ? payload.account : null;
+    const requiresOpenaiAuth = Boolean(payload.requiresOpenaiAuth);
+    const accountType = account && typeof account.type === "string" ? account.type : "";
+    const accountEmail = account && typeof account.email === "string" ? account.email : "";
+    const planType = account && typeof account.planType === "string" ? account.planType : "";
+
+    const result: ProbeCodexAuthResult = {
+      authenticated: Boolean(accountType),
+      requiresOpenaiAuth,
+      accountType: accountType || undefined,
+      accountEmail: accountEmail || undefined,
+      planType: planType || undefined,
+      loginRequired: false,
+    };
+
+    if (!accountType && requiresOpenaiAuth) {
+      result.loginRequired = true;
+      try {
+        const loginStatus = await session.startChatgptLoginIfRequired();
+        if (loginStatus.status === "login_required") {
+          result.authUrl = loginStatus.authUrl;
+        }
+      } catch (error) {
+        options.context?.log(`Codex auth probe login/start failed: ${toErrorMessage(error)}`);
+      }
+      return result;
+    }
+
+    if (options.includeModelProbe && accountType) {
+      try {
+        const models = await session.listModels(false);
+        result.modelCount = models.length;
+        result.sampleModels = models.slice(0, 8).map((m) => m.model);
+      } catch (error) {
+        options.context?.log(`Codex auth probe model/list failed: ${toErrorMessage(error)}`);
+      }
+    }
+
+    return result;
+  } finally {
+    await session.close();
+  }
 }
 
 export async function listCodexModels(options: ListCodexModelsOptions): Promise<CodexModelSummary[]> {

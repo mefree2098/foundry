@@ -429,6 +429,28 @@ export type CodexModelsResponse = {
   models: CodexModelPickerItem[];
 };
 
+export type CodexAuthHealthResponse = {
+  source: "codex";
+  timestamp: string;
+  codexPath: string;
+  codexHome?: string;
+  authenticated: boolean;
+  requiresOpenaiAuth: boolean;
+  loginRequired: boolean;
+  authUrl?: string;
+  accountType?: string;
+  accountEmail?: string;
+  planType?: string;
+  modelCount?: number;
+  sampleModels?: string[];
+  instance?: {
+    siteName?: string;
+    instanceId?: string;
+    hostname?: string;
+    pid?: number;
+  };
+};
+
 export const fetchCodexModels = (params?: { codexPath?: string; codexHome?: string; includeHidden?: boolean; startLogin?: boolean }) => {
   const search = new URLSearchParams();
   if (params?.codexPath) search.set("codexPath", params.codexPath);
@@ -437,6 +459,16 @@ export const fetchCodexModels = (params?: { codexPath?: string; codexHome?: stri
   if (params?.startLogin) search.set("startLogin", "1");
   const suffix = search.toString() ? `?${search.toString()}` : "";
   return getJson<CodexModelsResponse>(`/ai/codex-models${suffix}`);
+};
+
+export const fetchCodexAuthHealth = (params?: { codexPath?: string; codexHome?: string; includeModelProbe?: boolean }) => {
+  const search = new URLSearchParams();
+  if (params?.codexPath) search.set("codexPath", params.codexPath);
+  if (params?.codexHome) search.set("codexHome", params.codexHome);
+  if (params?.includeModelProbe === false) search.set("includeModelProbe", "0");
+  if (params?.includeModelProbe === true) search.set("includeModelProbe", "1");
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return getJson<CodexAuthHealthResponse>(`/ai/codex-auth-health${suffix}`);
 };
 
 export const completeCodexLogin = (payload: { loginId?: string; callbackUrl: string; codexPath?: string; codexHome?: string }) =>

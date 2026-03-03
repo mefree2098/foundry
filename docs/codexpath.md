@@ -106,7 +106,7 @@ For each request/session:
    - `initialize` request
    - `initialized` notification
 4. Auth check:
-   - call `account/read { refreshToken: false }`
+   - call `account/read { refreshToken: true }`
    - if `requiresOpenaiAuth=true`, call `account/login/start { type: "chatgpt" }`
    - surface `authUrl` to UI/API caller
    - note: returned `authUrl` uses `redirect_uri=http://localhost:<port>/auth/callback` by design
@@ -215,6 +215,8 @@ Implement a dedicated API endpoint, for example:
 - `POST /api/ai/codex-login/complete` for pasted localhost callback URL relay
   - `loginId` should be optional in request payload; use it when available for in-memory relay, but support callback-only completion when missing/stale
   - in multi-worker deployments, persist ephemeral relay session/task docs in shared storage (for example Cosmos) so completion can be handed back to the owning worker
+- `GET /api/ai/codex-auth-health` for auth persistence diagnostics
+  - should return effective `codexPath`/`codexHome`, auth status, optional account identity fields, optional model probe count, and worker instance identifiers
 
 Return a simple UI-ready shape:
 
@@ -243,8 +245,11 @@ When `authMode === "codexPath"`:
 
 - render a model `<select>` populated from `/api/ai/codex-models`
 - show a "Refresh model list" button
+- show a "Check auth persistence" button that calls `/api/ai/codex-auth-health` and displays worker/path/auth diagnostics
 - if `loginRequired`, show clickable login URL
 - always show an explicit primary button: **"Sign in to OpenAI"** (do not hide login behind errors)
+- for "Sign in to OpenAI", always call backend with explicit `startLogin=1` first (do not rely only on an older cached login URL)
+- ensure frontend cache/query keys for Codex model/login data include (`authMode`, `codexPath`, `codexHome`) to avoid stale login/model state in UI
 - render a **deployment profile selector** for Codex home path (`auto`, `azure`, `aws`, `local`, `custom`)
 - auto-populate `codexHome` from selected profile (only editable in `custom`)
 - for `aws` profile, show an extra input for persistent volume root and derive `codexHome` from it
@@ -320,6 +325,8 @@ Useful env vars:
 Capture a stderr tail from Codex process and append it to errors for easier debugging.
 
 If you deploy with multiple workers/instances, ensure the cross-instance login relay storage is available (shared DB/container). Without it, `start`/`complete` can land on different workers and fail with "No pending session".
+
+Use `account/read { refreshToken: true }` in managed ChatGPT auth checks. Using `refreshToken: false` can create false "login required" behavior after worker recycle/restart even when refreshable login state exists.
 
 ### 11.1 Runtime packaging requirement (required)
 
