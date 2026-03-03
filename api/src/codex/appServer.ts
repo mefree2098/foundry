@@ -1122,9 +1122,6 @@ async function forwardPendingLoginCallback(
   }
 
   const relayCallback = new URL(pending.callbackUrl);
-  for (const key of Array.from(relayCallback.searchParams.keys())) {
-    relayCallback.searchParams.delete(key);
-  }
   for (const [key, value] of callbackParams.entries()) {
     relayCallback.searchParams.set(key, value);
   }
@@ -1514,9 +1511,6 @@ export async function completeCodexLoginViaCallback(options: CompleteCodexLoginV
       return;
     }
     const relayCallback = new URL(loginStatus.callbackUrl);
-    for (const key of Array.from(relayCallback.searchParams.keys())) {
-      relayCallback.searchParams.delete(key);
-    }
     for (const [key, value] of params.entries()) {
       relayCallback.searchParams.set(key, value);
     }
