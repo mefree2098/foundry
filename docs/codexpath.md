@@ -89,6 +89,11 @@ Example defaults:
 - `model`: `gpt-4o-mini` (`apiKey`) / `gpt-5.1-codex` (`codexPath`)
 - `codexPath`: `process.env.CODEX_PATH || "codex"` (resolved to bundled `@openai/codex` when available)
 
+Critical implementation rule:
+
+- In admin UIs with unsaved drafts, always send the **current draft auth settings** (`authMode`, `apiKey` when applicable, `codexPath`, `codexHome`, `model`) on each chat request.
+- Do not rely only on stored config for chat calls; otherwise model-list/login checks can succeed with draft settings while chat still uses stale saved settings and fails with login-required errors.
+
 ---
 
 ## 4) Codex app-server lifecycle (exact sequence)
@@ -110,6 +115,7 @@ For each request/session:
    - if `requiresOpenaiAuth=true`, call `account/login/start { type: "chatgpt" }`
    - surface `authUrl` to UI/API caller
    - note: returned `authUrl` uses `redirect_uri=http://localhost:<port>/auth/callback` by design
+   - important: for ChatGPT-managed auth, do not try to rewrite `redirect_uri` "in flight"; treat returned `authUrl` as authoritative and use callback relay completion
 5. Thread + turn:
    - `thread/start` with model/cwd/etc.
    - `turn/start` with input + model + output schema (if needed)
@@ -250,6 +256,7 @@ When `authMode === "codexPath"`:
 - always show an explicit primary button: **"Sign in to OpenAI"** (do not hide login behind errors)
 - for "Sign in to OpenAI", always call backend with explicit `startLogin=1` first (do not rely only on an older cached login URL)
 - ensure frontend cache/query keys for Codex model/login data include (`authMode`, `codexPath`, `codexHome`) to avoid stale login/model state in UI
+- if browser popup is blocked, keep a plain clickable **Open login URL** link as fallback and preserve callback paste flow
 - render a **deployment profile selector** for Codex home path (`auto`, `azure`, `aws`, `local`, `custom`)
 - auto-populate `codexHome` from selected profile (only editable in `custom`)
 - for `aws` profile, show an extra input for persistent volume root and derive `codexHome` from it
@@ -320,6 +327,8 @@ Useful env vars:
 - `CODEX_HOME`
 - `CODEX_RPC_TIMEOUT_MS` (request/response timeout)
 - `CODEX_TURN_TIMEOUT_MS` (turn completion timeout)
+- `CODEX_LOGIN_TTL_MS` (pending login relay lifetime)
+- `CODEX_LOGIN_COMPLETE_TIMEOUT_MS` (wait budget for login completion relay)
 - app-level override (example): `CODEX_TIMEOUT_MS`
 
 Capture a stderr tail from Codex process and append it to errors for easier debugging.
@@ -414,3 +423,323 @@ Cons:
 - extra process startup overhead
 
 For higher throughput, move to a pooled or persistent session host with stronger concurrency controls.
+
+---
+
+## 16) Failure mode postmortem (what failed in production and exact fix)
+
+This section is the "do not rediscover this" list.
+
+### 16.1 "Unable to start Codex login right now"
+
+Observed:
+
+- Login button did not produce usable login flow.
+- Backend reported Codex start failures.
+
+Root cause:
+
+- Hosted backend could not execute `codex` from PATH.
+
+Fix:
+
+1. Add `@openai/codex` as backend dependency.
+2. Resolve and spawn bundled entrypoint `@openai/codex/bin/codex.js` via Node.
+3. Keep explicit `CODEX_PATH` override support, but prefer bundled launch.
+
+### 16.2 Login redirects to localhost and browser shows connection refused
+
+Observed:
+
+- User successfully signs in to OpenAI, then browser lands on `http://localhost:1455/auth/callback?...` and fails.
+
+Root cause:
+
+- ChatGPT-managed Codex login callback is local to the server process hosting app-server, not the end-user browser machine.
+
+Fix:
+
+1. Keep explicit "paste localhost callback URL" input.
+2. Add `POST /api/ai/codex-login/complete` to relay pasted callback params to the server-side pending login listener.
+3. Support callback-only completion fallback (no pending id required).
+
+### 16.3 "No pending Codex login session found. Start login again."
+
+Observed:
+
+- Completion failed even with a valid callback URL.
+
+Root causes:
+
+- Start and complete requests could hit different workers/instances.
+- Pending login map existed only in memory of the owning worker.
+
+Fix:
+
+1. Persist `codex-login-session:<loginKey>` docs in shared storage.
+2. Persist `codex-login-task:<loginKey>` docs for cross-instance completion requests.
+3. Run remote task pump on owning worker to execute callback relay and write success/error task result.
+4. Keep pending login alive for retryable errors (`status 400`, timeout, missing code/state).
+5. Allow login-key fallback lookup even when strict owner match misses.
+
+### 16.4 Login claims success, model list does not update/stays stale
+
+Observed:
+
+- UI showed success alert, but model list did not reflect new state.
+
+Root cause:
+
+- React Query cache update used a different key from the active model query.
+
+Fix:
+
+1. Use one shared key including `authMode`, `codexPath`, and `codexHome`.
+2. Use that exact key for both query and `setQueryData`.
+
+### 16.5 Model list works, but chat still says "Codex subscription login is required"
+
+Observed:
+
+- `/ai/codex-models` returned models.
+- `/ai/chat` still returned login-required URL.
+
+Root causes:
+
+- Chat request path used stale saved settings while model/login checks used current draft settings.
+- Auth checks were using `account/read { refreshToken: false }`, which can report not-authenticated after worker recycle even when refreshable session exists.
+
+Fix:
+
+1. In frontend chat send path, always pass live `authMode`, `codexPath`, `codexHome`, `model` (and inline API key when in API-key mode).
+2. Switch managed-auth account checks to `refreshToken: true` for chat/login/probe verification paths.
+
+### 16.6 End-user friction from manual Codex home path
+
+Observed:
+
+- Requiring user to understand storage paths caused setup failures.
+
+Fix:
+
+1. Add deployment profile selector: `auto`, `azure`, `aws`, `local`, `custom`.
+2. Auto-derive `codexHome` for non-custom profiles.
+3. For AWS profile, ask only for mount root and derive rest.
+4. Keep custom mode for advanced overrides only.
+
+### 16.7 Popup blocked during login
+
+Observed:
+
+- `window.open` blocked by browser popup settings.
+
+Fix:
+
+1. Keep explicit clickable login anchor ("Open login URL").
+2. Keep callback paste/complete flow independent of popup success.
+
+---
+
+## 17) Persistence behavior across deploys/restarts
+
+### 17.1 What persists
+
+- Codex login state persists if `CODEX_HOME` points to persistent storage and that same path is used by subsequent workers.
+- For Azure App Service Linux in this implementation, `/home/site/.codex/ntechr` is the intended persistent location.
+- For AWS deployments, use a shared persistent volume path (for example EFS) and set profile/root accordingly.
+- In hosted Linux environments, force file-based credential storage by writing these to `${CODEX_HOME}/config.toml`:
+  - `cli_auth_credentials_store = "file"`
+  - `mcp_oauth_credentials_store = "file"`
+- Do not rely on keyring/auto for server workers unless you have explicitly verified durable keyring behavior.
+
+### 17.2 What does not persist
+
+- In-memory pending login sessions do not survive worker recycle or redeploy.
+- Instance-local temporary directories do not provide reliable cross-deploy persistence.
+
+### 17.3 Practical rule for CI/CD deploys (e.g., GitHub Actions -> Azure)
+
+1. Keep `codexHomeProfile` set to a persistent profile (`azure` or `aws`) and save settings.
+2. Ensure backend continues to resolve to the same effective `codexHome`.
+3. Use auth health endpoint to verify active worker and resolved home path after deployment.
+4. If storage path changes, login must be re-established.
+
+### 17.4 UX persistence rule (important)
+
+- After successful Codex login/model refresh, auto-save current OpenAI/Codex settings from the admin UI.
+- Do not require users to click Save manually after login.
+- If you skip this, users can complete login in draft state, reload later, and appear "not configured" again because stored settings were never updated.
+
+---
+
+## 18) Exact implementation map (files/endpoints/UI)
+
+### 18.1 Backend endpoints required
+
+- `POST /api/ai/chat`
+- `GET /api/ai/codex-models`
+- `POST /api/ai/codex-login/complete`
+- `GET /api/ai/codex-auth-health`
+
+### 18.2 Backend modules required
+
+- Codex app-server runner:
+  - process spawn + JSONL routing + request/notification handling
+  - auth check + login start + model list + turn execution
+  - callback relay completion and callback-only fallback completion
+  - cross-instance relay coordination (session/task docs in shared storage)
+- Codex home profile resolver:
+  - `auto/azure/aws/local/custom` -> effective codex home path
+
+### 18.3 Frontend behaviors required
+
+- Auth mode switch (`apiKey` vs `codexPath`)
+- Codex model picker + refresh
+- Explicit `Sign in to OpenAI` action
+- Fallback `Open login URL` anchor
+- Callback URL paste + `Complete login`
+- Auth persistence check button (health endpoint)
+- Deployment profile selector with auto-populated codex home
+- Chat send path that includes live auth settings in payload
+- Auto-save Codex settings after successful login/model load so configuration survives reloads
+
+### 18.4 Validation checklist before shipping
+
+1. Switch to Codex mode and confirm model list loads.
+2. Trigger login from UI and complete callback flow.
+3. Refresh model list and confirm non-empty models.
+4. Send chat request and confirm no login-required error.
+5. Run auth health and confirm:
+   - authenticated=true
+   - expected codexHome
+   - expected worker instance details
+6. Redeploy and re-test chat without re-login to verify persistence.
+
+### 18.5 File map from this implementation
+
+- Backend:
+  - `api/src/codex/appServer.ts`
+  - `api/src/codex/homeProfile.ts`
+  - `api/src/http/ai-chat.ts`
+  - `api/src/http/ai-codex-models.ts`
+  - `api/src/http/ai-codex-login-complete.ts`
+  - `api/src/http/ai-codex-auth-health.ts`
+  - `api/src/http/config-upsert.ts`
+  - `api/src/types/content.ts`
+  - `api/src/index.ts`
+- Frontend:
+  - `src/pages/AdminAiAssistant.tsx`
+  - `src/lib/api.ts`
+  - `src/types/content.ts`
+
+---
+
+## 19) API contracts that should exist (copy/paste reference)
+
+### 19.1 `GET /api/ai/codex-models`
+
+Success:
+
+```json
+{
+  "source": "codex",
+  "includeHidden": false,
+  "loginRequired": false,
+  "models": [
+    {
+      "id": "gpt-5.1-codex",
+      "model": "gpt-5.1-codex",
+      "displayName": "GPT-5.1 Codex",
+      "description": "",
+      "hidden": false,
+      "isDefault": true,
+      "supportsPersonality": true,
+      "inputModalities": ["text", "image"],
+      "supportedReasoningEfforts": []
+    }
+  ]
+}
+```
+
+Login required:
+
+```json
+{
+  "source": "codex",
+  "includeHidden": false,
+  "loginRequired": true,
+  "authUrl": "https://auth.openai.com/oauth/authorize?...redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback...",
+  "pendingLoginId": "uuid-when-startLogin-true",
+  "callbackHint": "If login lands on localhost and fails, paste that full URL into Complete login.",
+  "models": []
+}
+```
+
+### 19.2 `POST /api/ai/codex-login/complete`
+
+Request:
+
+```json
+{
+  "loginId": "optional-pending-login-id",
+  "callbackUrl": "http://localhost:1455/auth/callback?code=...&state=...",
+  "codexPath": "optional",
+  "codexHome": "optional"
+}
+```
+
+Success response:
+
+```json
+{ "success": true, "mode": "relay|fallback" }
+```
+
+Behavior requirements:
+
+- Try relay completion first when `loginId` is present.
+- If relay fails or `loginId` is absent, try callback-only fallback completion.
+- Return detailed combined errors when both attempts fail.
+
+### 19.3 `GET /api/ai/codex-auth-health`
+
+Response:
+
+```json
+{
+  "source": "codex",
+  "timestamp": "2026-03-03T00:00:00.000Z",
+  "codexPath": "codex",
+  "codexHome": "/home/site/.codex/ntechr",
+  "authenticated": true,
+  "requiresOpenaiAuth": true,
+  "loginRequired": false,
+  "accountType": "chatgpt",
+  "accountEmail": "user@example.com",
+  "planType": "pro",
+  "modelCount": 6,
+  "sampleModels": ["gpt-5.1-codex"],
+  "instance": {
+    "siteName": "your-site",
+    "instanceId": "instance-id",
+    "hostname": "hostname",
+    "pid": 1234
+  }
+}
+```
+
+---
+
+## 20) Non-negotiable rules (summary)
+
+1. Do not build a separate Codex service; your backend process is the Codex host.
+2. Bundle `@openai/codex` in backend runtime; do not depend on global PATH in hosted environments.
+3. Use persistent `codexHome` and make profile-based auto defaults.
+4. Always provide explicit "Sign in to OpenAI" UX in Codex mode.
+5. Expect localhost callback URL and implement callback relay completion.
+6. Treat login completion as successful only after account verification, not notification alone.
+7. Use `account/read { refreshToken: true }` for managed ChatGPT auth checks.
+8. Include live draft auth settings in chat requests.
+9. Keep query keys and cache updates consistent for model/login state.
+10. Add auth health diagnostics endpoint and expose it in admin UI.
+11. Force `cli_auth_credentials_store = "file"` in `${CODEX_HOME}/config.toml` on the server.
+12. Auto-save Codex settings after login success; do not depend on manual Save clicks.

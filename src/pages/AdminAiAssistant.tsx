@@ -362,6 +362,48 @@ function AdminAiAssistant() {
   const configuredAuthMode: OpenAiAuthMode = config?.ai?.adminAssistant?.openai?.authMode === "codexPath" ? "codexPath" : "apiKey";
   const authModeSaved = authMode === configuredAuthMode;
 
+  const persistCodexSettingsAfterLogin = async () => {
+    const openai = config?.ai?.adminAssistant?.openai;
+    const targetModel = model.trim() || "gpt-5.1-codex";
+    const targetCodexPath = codexPathDraft.trim();
+    const targetCodexHome = effectiveCodexHomeDraft;
+    const targetAwsRoot = codexHomeProfile === "aws" ? normalizeAwsVolumeRoot(codexAwsVolumeRootDraft) : undefined;
+    const storedCodexPath = (openai?.codexPath || "").trim();
+    const storedCodexHome = (openai?.codexHome || "").trim();
+    const storedModel = (openai?.model || "").trim();
+    const storedProfile = (openai?.codexHomeProfile || "auto").trim();
+    const storedAwsRoot = (openai?.codexAwsVolumeRoot || "").trim() || undefined;
+
+    const needsSave =
+      openai?.authMode !== "codexPath" ||
+      storedModel !== targetModel ||
+      storedCodexPath !== targetCodexPath ||
+      storedCodexHome !== targetCodexHome ||
+      storedProfile !== codexHomeProfile ||
+      storedAwsRoot !== targetAwsRoot;
+
+    if (!needsSave) return false;
+
+    const base = config || ({ id: "global" } as any);
+    const openaiPatch: any = {
+      authMode: "codexPath",
+      model: targetModel,
+      imageModel: imageModel.trim() || "gpt-image-1.5",
+      imageSize: imageSize.trim() || "1024x1024",
+      imageQuality,
+      imageBackground,
+      imageOutputFormat,
+      codexPath: targetCodexPath,
+      codexHome: targetCodexHome,
+      codexHomeProfile,
+      codexAwsVolumeRoot: targetAwsRoot,
+    };
+    const next = deepMerge(base, { ai: { adminAssistant: { openai: openaiPatch } } });
+    await saveConfig(next as any);
+    await queryClient.invalidateQueries({ queryKey: ["config"] });
+    return true;
+  };
+
   useEffect(() => {
     const pendingId = codexModelsQuery.data?.pendingLoginId;
     if (!pendingId) return;
@@ -393,11 +435,19 @@ function AdminAiAssistant() {
         );
         return;
       }
+      let autoSaved = false;
+      try {
+        autoSaved = await persistCodexSettingsAfterLogin();
+      } catch (err) {
+        alert(err instanceof Error ? `Codex login succeeded, but saving Codex settings failed: ${err.message}` : "Codex login succeeded, but saving Codex settings failed.");
+      }
       if (payload?.models?.length) {
-        alert(`Codex login completed. ${payload.models.length} model${payload.models.length === 1 ? "" : "s"} loaded.`);
+        alert(
+          `Codex login completed. ${payload.models.length} model${payload.models.length === 1 ? "" : "s"} loaded.${autoSaved ? " Settings were auto-saved." : ""}`,
+        );
         return;
       }
-      alert("Codex login completed, but no models were returned yet. Click Refresh model list.");
+      alert(`Codex login completed, but no models were returned yet. Click Refresh model list.${autoSaved ? " Settings were auto-saved." : ""}`);
     },
     onError: (err: unknown) => {
       alert(err instanceof Error ? err.message : "Failed to complete Codex login");
@@ -466,7 +516,13 @@ function AdminAiAssistant() {
       return;
     }
     if (payload?.models?.length) {
-      alert("Codex is already connected to OpenAI.");
+      let autoSaved = false;
+      try {
+        autoSaved = await persistCodexSettingsAfterLogin();
+      } catch (err) {
+        alert(err instanceof Error ? `Codex is already connected, but saving Codex settings failed: ${err.message}` : "Codex is already connected, but saving Codex settings failed.");
+      }
+      alert(`Codex is already connected to OpenAI.${autoSaved ? " Settings were auto-saved." : ""}`);
       return;
     }
     alert(

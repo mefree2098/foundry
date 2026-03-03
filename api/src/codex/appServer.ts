@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { accessSync, constants as fsConstants, mkdirSync } from "node:fs";
+import { accessSync, constants as fsConstants, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -15,6 +15,7 @@ const DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS = Number(process.env.CODEX_LOGIN_C
 const STDERR_TAIL_MAX = 2000;
 const DEFAULT_CODEX_HOME_TMP_DIR = "ntechr-codex-home";
 const DEFAULT_CODEX_HOME_AZURE_DIR = "/home/site/.codex";
+const CODEX_CONFIG_FILE_NAME = "config.toml";
 
 type JsonRpcId = number | string;
 
@@ -248,11 +249,42 @@ function unique(values: string[]): string[] {
   return out;
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function ensureWritableDirectory(dirPath: string): string {
   const normalized = path.resolve(dirPath.trim());
   mkdirSync(normalized, { recursive: true });
   accessSync(normalized, fsConstants.R_OK | fsConstants.W_OK);
   return normalized;
+}
+
+function upsertTomlStringSetting(content: string, key: string, value: string) {
+  const desired = `${key} = "${value}"`;
+  const pattern = new RegExp(`^\\s*${escapeRegExp(key)}\\s*=.*$`, "m");
+  if (pattern.test(content)) {
+    return content.replace(pattern, desired);
+  }
+  const trimmed = content.trimEnd();
+  return trimmed ? `${trimmed}\n${desired}\n` : `${desired}\n`;
+}
+
+function ensureCodexPersistentAuthConfig(codexHome: string) {
+  const configPath = path.join(codexHome, CODEX_CONFIG_FILE_NAME);
+  let current = "";
+  try {
+    current = readFileSync(configPath, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== "ENOENT") throw error;
+  }
+  let next = current;
+  next = upsertTomlStringSetting(next, "cli_auth_credentials_store", "file");
+  next = upsertTomlStringSetting(next, "mcp_oauth_credentials_store", "file");
+  if (next !== current) {
+    writeFileSync(configPath, next, "utf8");
+  }
 }
 
 function resolveDefaultCodexHomeCandidates() {
@@ -601,6 +633,7 @@ class CodexAppServerSession {
     const env = { ...process.env };
     this.resolvedCodexHome = resolveCodexHomePath(options.codexHome);
     if (this.resolvedCodexHome) {
+      ensureCodexPersistentAuthConfig(this.resolvedCodexHome);
       env.CODEX_HOME = this.resolvedCodexHome;
     }
     this.launchSpec = resolveCodexLaunchSpec(options.codexPath);
