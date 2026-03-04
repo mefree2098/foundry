@@ -100,6 +100,7 @@ async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext
           const probe = await probeCodexAuth({
             codexPath: finalCodexPath,
             codexHome: finalCodexHome,
+            ownerId: principal.userId,
             includeModelProbe: false,
             context,
           });
@@ -133,6 +134,7 @@ async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext
       callbackUrlOrQuery: parsed.data.callbackUrl,
       codexPath: finalCodexPath,
       codexHome: finalCodexHome,
+      ownerId: principal.userId,
       context,
     });
     return {

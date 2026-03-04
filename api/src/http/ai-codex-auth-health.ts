@@ -1,5 +1,5 @@
 import { app, type HttpRequest, type HttpResponseInit, type InvocationContext } from "@azure/functions";
-import { ensureAdmin } from "../auth.js";
+import { ensureAdmin, getClientPrincipal } from "../auth.js";
 import { database } from "../client.js";
 import { containers } from "../cosmos.js";
 import { siteConfigSchema } from "../types/content.js";
@@ -36,6 +36,7 @@ async function getStoredCodexSettings() {
 async function aiCodexAuthHealth(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   const auth = ensureAdmin(req);
   if (!auth.ok) return { status: auth.status, body: auth.body };
+  const principal = getClientPrincipal(req);
 
   const includeModelProbe = req.query.get("includeModelProbe") == null ? true : parseBoolean(req.query.get("includeModelProbe"));
   const queryPath = (req.query.get("codexPath") || "").trim();
@@ -50,6 +51,7 @@ async function aiCodexAuthHealth(req: HttpRequest, context: InvocationContext): 
     const probe = await probeCodexAuth({
       codexPath: finalCodexPath,
       codexHome: finalCodexHome,
+      ownerId: principal?.userId,
       includeModelProbe,
       context,
     });

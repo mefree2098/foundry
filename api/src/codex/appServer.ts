@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { accessSync, constants as fsConstants, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -48,6 +48,7 @@ export type CodexModelSummary = {
 export type RunCodexChatOptions = {
   codexPath: string;
   codexHome?: string;
+  ownerId?: string;
   model: string;
   cwd?: string;
   developerInstructions: string;
@@ -62,6 +63,7 @@ export type RunCodexChatOptions = {
 export type ListCodexModelsOptions = {
   codexPath: string;
   codexHome?: string;
+  ownerId?: string;
   includeHidden?: boolean;
   requestTimeoutMs?: number;
   context?: InvocationContext;
@@ -70,6 +72,7 @@ export type ListCodexModelsOptions = {
 export type ProbeCodexAuthOptions = {
   codexPath: string;
   codexHome?: string;
+  ownerId?: string;
   includeModelProbe?: boolean;
   requestTimeoutMs?: number;
   context?: InvocationContext;
@@ -116,6 +119,7 @@ export type CompleteCodexLoginViaCallbackOptions = {
   callbackUrlOrQuery: string;
   codexPath: string;
   codexHome?: string;
+  ownerId?: string;
   requestTimeoutMs?: number;
   waitForAuthMs?: number;
   context?: InvocationContext;
@@ -177,6 +181,16 @@ type CodexLoginTaskDoc = {
   updatedAt: string;
 };
 
+type CodexAuthSnapshotDoc = {
+  id: string;
+  type: "codex-auth-snapshot";
+  ownerId: string;
+  codexHomeHash: string;
+  authJson: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 const requireFromHere = createRequire(import.meta.url);
 const pendingCodexLogins = new Map<string, PendingCodexLogin>();
 let cachedCoordinationContainerPromise: Promise<Container | null> | null = null;
@@ -200,6 +214,14 @@ function codexLoginSessionDocId(loginKey: string) {
 
 function codexLoginTaskDocId(loginKey: string) {
   return `codex-login-task:${loginKey}`;
+}
+
+function codexHomeHash(codexHome: string) {
+  return createHash("sha256").update(codexHome).digest("hex").slice(0, 24);
+}
+
+function codexAuthSnapshotDocId(ownerId: string, codexHome: string) {
+  return `codex-auth-snapshot:${ownerId}:${codexHomeHash(codexHome)}`;
 }
 
 function codexInstanceId() {
@@ -540,6 +562,36 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function codexAuthFilePath(codexHome: string) {
+  return path.join(codexHome, "auth.json");
+}
+
+function hasRefreshTokenInAuthJson(raw: string) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!isRecord(parsed)) return false;
+    const tokens = isRecord(parsed.tokens) ? parsed.tokens : null;
+    const refreshToken = tokens && typeof tokens.refresh_token === "string" ? tokens.refresh_token.trim() : "";
+    return Boolean(refreshToken);
+  } catch {
+    return false;
+  }
+}
+
+function readCodexAuthJsonFromHome(codexHome: string): string | undefined {
+  try {
+    const raw = readFileSync(codexAuthFilePath(codexHome), "utf8");
+    if (!raw.trim()) return undefined;
+    return raw;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeCodexAuthJsonToHome(codexHome: string, authJson: string) {
+  writeFileSync(codexAuthFilePath(codexHome), authJson, "utf8");
+}
+
 async function assertCodexCallbackForwardSucceeded(response: Response, label: string) {
   const status = response.status;
   const statusText = response.statusText || "";
@@ -655,6 +707,42 @@ async function deleteCodexLoginTaskDoc(loginKey: string) {
     await container.item(id, id).delete();
   } catch {
     // Ignore missing docs / best effort cleanup.
+  }
+}
+
+async function readCodexAuthSnapshotDoc(ownerId: string, codexHome: string): Promise<CodexAuthSnapshotDoc | null> {
+  const container = await getCodexLoginCoordinationContainer();
+  if (!container) return null;
+  const id = codexAuthSnapshotDocId(ownerId, codexHome);
+  try {
+    const { resource } = await container.item(id, id).read<CodexAuthSnapshotDoc>();
+    if (!resource || resource.type !== "codex-auth-snapshot") return null;
+    return resource;
+  } catch {
+    return null;
+  }
+}
+
+async function upsertCodexAuthSnapshotDoc(ownerId: string, codexHome: string, authJson: string) {
+  const container = await getCodexLoginCoordinationContainer();
+  if (!container) return;
+  const now = new Date().toISOString();
+  const id = codexAuthSnapshotDocId(ownerId, codexHome);
+  const existing = await readCodexAuthSnapshotDoc(ownerId, codexHome);
+  if (existing?.authJson === authJson) return;
+  const doc: CodexAuthSnapshotDoc = {
+    id,
+    type: "codex-auth-snapshot",
+    ownerId,
+    codexHomeHash: codexHomeHash(codexHome),
+    authJson,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  };
+  try {
+    await container.items.upsert(doc);
+  } catch {
+    // Best effort snapshot write.
   }
 }
 
@@ -919,7 +1007,36 @@ class CodexAppServerSession {
     return () => this.notificationHandlers.delete(handler);
   }
 
+  private async restoreAuthSnapshotIfNeeded() {
+    const ownerId = (this.options.ownerId || "").trim();
+    const codexHome = this.resolvedCodexHome;
+    if (!ownerId || !codexHome) return;
+
+    const existing = readCodexAuthJsonFromHome(codexHome);
+    if (existing && hasRefreshTokenInAuthJson(existing)) return;
+
+    const snapshot = await readCodexAuthSnapshotDoc(ownerId, codexHome);
+    if (!snapshot?.authJson || !hasRefreshTokenInAuthJson(snapshot.authJson)) return;
+    try {
+      writeCodexAuthJsonToHome(codexHome, snapshot.authJson);
+      this.options.context?.log(`Codex auth snapshot restored for owner=${ownerId}.`);
+    } catch (error) {
+      this.options.context?.log(`Codex auth snapshot restore failed: ${toErrorMessage(error)}`);
+    }
+  }
+
+  async persistAuthSnapshotIfPresent() {
+    const ownerId = (this.options.ownerId || "").trim();
+    const codexHome = this.resolvedCodexHome;
+    if (!ownerId || !codexHome) return;
+
+    const authJson = readCodexAuthJsonFromHome(codexHome);
+    if (!authJson || !hasRefreshTokenInAuthJson(authJson)) return;
+    await upsertCodexAuthSnapshotDoc(ownerId, codexHome, authJson);
+  }
+
   async initialize() {
+    await this.restoreAuthSnapshotIfNeeded();
     await this.request("initialize", {
       clientInfo: {
         name: "ntechr-api",
@@ -933,13 +1050,19 @@ class CodexAppServerSession {
 
   async ensureAuthenticated() {
     const accountState = parseCodexAccountState(await this.request("account/read", { refreshToken: true }));
-    if (accountState.accountType || !accountState.requiresOpenaiAuth) return;
+    if (accountState.accountType || !accountState.requiresOpenaiAuth) {
+      await this.persistAuthSnapshotIfPresent();
+      return;
+    }
 
     // In hosted workers account/read can briefly lag right after token refresh.
     // Recheck once before forcing a fresh login.
     await sleep(250);
     const recheckState = parseCodexAccountState(await this.request("account/read", { refreshToken: true }));
-    if (recheckState.accountType || !recheckState.requiresOpenaiAuth) return;
+    if (recheckState.accountType || !recheckState.requiresOpenaiAuth) {
+      await this.persistAuthSnapshotIfPresent();
+      return;
+    }
     const started = parseCodexLoginStartPayload(await this.request("account/login/start", { type: "chatgpt" }));
     throw new CodexLoginRequiredError(started.authUrl, started.loginId);
   }
@@ -950,11 +1073,13 @@ class CodexAppServerSession {
   > {
     const accountState = parseCodexAccountState(await this.request("account/read", { refreshToken: true }));
     if (accountState.accountType || !accountState.requiresOpenaiAuth) {
+      await this.persistAuthSnapshotIfPresent();
       return { status: "authenticated" };
     }
     await sleep(250);
     const recheckState = parseCodexAccountState(await this.request("account/read", { refreshToken: true }));
     if (recheckState.accountType || !recheckState.requiresOpenaiAuth) {
+      await this.persistAuthSnapshotIfPresent();
       return { status: "authenticated" };
     }
     const started = parseCodexLoginStartPayload(await this.request("account/login/start", { type: "chatgpt" }));
@@ -986,6 +1111,7 @@ class CodexAppServerSession {
       cursor = next;
     }
 
+    await this.persistAuthSnapshotIfPresent();
     return allModels;
   }
 
@@ -1158,7 +1284,9 @@ export async function runCodexChat(options: RunCodexChatOptions): Promise<CodexC
   try {
     await session.initialize();
     await session.ensureAuthenticated();
-    return await session.runTurn();
+    const result = await session.runTurn();
+    await session.persistAuthSnapshotIfPresent();
+    return result;
   } catch (error) {
     options.context?.log(`Codex request failed: ${toErrorMessage(error)}`);
     throw error;
@@ -1225,11 +1353,13 @@ async function forwardPendingLoginCallback(
       if (!ok) {
         throw new Error("Codex login completion event received, but authenticated account state was not observed.");
       }
+      await pending.session.persistAuthSnapshotIfPresent();
       return;
     }
 
     const ok = await isSessionAuthenticated(pending.session, 5000);
     if (ok) {
+      await pending.session.persistAuthSnapshotIfPresent();
       return;
     }
     await sleep(300);
@@ -1239,7 +1369,10 @@ async function forwardPendingLoginCallback(
     throw completionError;
   }
   const postTimeoutAuth = await waitForSessionAuthenticated(pending.session, 7000);
-  if (postTimeoutAuth) return;
+  if (postTimeoutAuth) {
+    await pending.session.persistAuthSnapshotIfPresent();
+    return;
+  }
   throw new Error("Timed out waiting for Codex login completion. Try again and repaste the callback URL.");
 }
 
@@ -1390,6 +1523,7 @@ export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions)
     {
       codexPath: options.codexPath,
       codexHome: options.codexHome,
+      ownerId: options.ownerId,
       model: "gpt-5.1-codex",
       developerInstructions: "",
       inputText: "",
@@ -1554,12 +1688,19 @@ export async function completeCodexLoginRelay(options: CompleteCodexLoginRelayOp
   await closePendingLogin(pending);
 }
 
-async function checkCodexAuthenticated(options: { codexPath: string; codexHome?: string; requestTimeoutMs?: number; context?: InvocationContext }) {
+async function checkCodexAuthenticated(options: {
+  codexPath: string;
+  codexHome?: string;
+  ownerId?: string;
+  requestTimeoutMs?: number;
+  context?: InvocationContext;
+}) {
   const requestTimeoutMs = Number.isFinite(options.requestTimeoutMs) ? Number(options.requestTimeoutMs) : DEFAULT_CODEX_RPC_TIMEOUT_MS;
   const session = new CodexAppServerSession(
     {
       codexPath: options.codexPath,
       codexHome: options.codexHome,
+      ownerId: options.ownerId,
       model: "gpt-5.1-codex",
       developerInstructions: "",
       inputText: "",
@@ -1570,6 +1711,9 @@ async function checkCodexAuthenticated(options: { codexPath: string; codexHome?:
   try {
     await session.initialize();
     const result = await session.request("account/read", { refreshToken: true });
+    if (hasCodexAccount(result)) {
+      await session.persistAuthSnapshotIfPresent();
+    }
     return hasCodexAccount(result);
   } finally {
     await session.close();
@@ -1610,6 +1754,7 @@ export async function completeCodexLoginViaCallback(options: CompleteCodexLoginV
       const ok = await checkCodexAuthenticated({
         codexPath: options.codexPath,
         codexHome: options.codexHome,
+        ownerId: options.ownerId,
         requestTimeoutMs: options.requestTimeoutMs,
         context: options.context,
       });
@@ -1630,6 +1775,7 @@ export async function completeCodexLoginViaCallback(options: CompleteCodexLoginV
     {
       codexPath: options.codexPath,
       codexHome: options.codexHome,
+      ownerId: options.ownerId,
       model: "gpt-5.1-codex",
       developerInstructions: "",
       inputText: "",
@@ -1653,7 +1799,10 @@ export async function completeCodexLoginViaCallback(options: CompleteCodexLoginV
     });
     await assertCodexCallbackForwardSucceeded(forwarded, "Codex callback replay");
     const ok = await waitForSessionAuthenticated(replaySession, waitForAuthMs);
-    if (ok) return;
+    if (ok) {
+      await replaySession.persistAuthSnapshotIfPresent();
+      return;
+    }
     replayError = "Codex callback replay succeeded, but authentication did not complete in time.";
   } catch (error) {
     replayError = toErrorMessage(error);
@@ -1721,6 +1870,7 @@ export async function probeCodexAuth(options: ProbeCodexAuthOptions): Promise<Pr
       }
     }
 
+    await session.persistAuthSnapshotIfPresent();
     return result;
   } finally {
     await session.close();
@@ -1743,7 +1893,9 @@ export async function listCodexModels(options: ListCodexModelsOptions): Promise<
   try {
     await session.initialize();
     await session.ensureAuthenticated();
-    return await session.listModels(Boolean(options.includeHidden));
+    const models = await session.listModels(Boolean(options.includeHidden));
+    await session.persistAuthSnapshotIfPresent();
+    return models;
   } catch (error) {
     options.context?.log(`Codex model/list failed: ${toErrorMessage(error)}`);
     throw error;

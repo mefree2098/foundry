@@ -84,6 +84,7 @@ async function aiCodexModels(req: HttpRequest, context: InvocationContext): Prom
     const models = await listCodexModels({
       codexPath: finalCodexPath,
       codexHome: finalCodexHome,
+      ownerId: principal.userId,
       includeHidden,
       context,
     });

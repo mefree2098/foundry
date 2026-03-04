@@ -1,6 +1,6 @@
 import { app, type HttpRequest, type HttpResponseInit, type InvocationContext } from "@azure/functions";
 import { z } from "zod";
-import { ensureAdmin } from "../auth.js";
+import { ensureAdmin, getClientPrincipal } from "../auth.js";
 import type { SiteConfig } from "../types/content.js";
 import { database } from "../client.js";
 import { containers } from "../cosmos.js";
@@ -343,12 +343,14 @@ async function streamChatViaCodex(
   {
     codexPath,
     codexHome,
+    ownerId,
     model,
     systemPrompt,
     messages,
   }: {
     codexPath: string;
     codexHome?: string;
+    ownerId?: string;
     model: string;
     systemPrompt: string;
     messages: { role: "user" | "assistant"; content: string }[];
@@ -369,6 +371,7 @@ async function streamChatViaCodex(
         const result = await runCodexChat({
           codexPath,
           codexHome,
+          ownerId,
           model,
           developerInstructions: systemPrompt,
           inputText: buildCodexTurnInput(messages),
@@ -578,6 +581,8 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
   try {
     const auth = ensureAdmin(req);
     if (!auth.ok) return { status: auth.status, body: auth.body };
+    const principal = getClientPrincipal(req);
+    const ownerId = principal?.userId;
 
     const raw = await req.json();
     const parsed = requestSchema.safeParse(raw);
@@ -693,7 +698,10 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
     const wantsStream = req.query.get("stream") === "1";
     if (wantsStream) {
       if (finalAuthMode === "codexPath") {
-        return streamChatViaCodex({ codexPath: finalCodexPath, codexHome: finalCodexHome, model: finalModel, systemPrompt, messages }, context);
+        return streamChatViaCodex(
+          { codexPath: finalCodexPath, codexHome: finalCodexHome, ownerId, model: finalModel, systemPrompt, messages },
+          context,
+        );
       }
       return streamChat({ apiKey: finalApiKey, model: finalModel, messages: openAiMessages }, context);
     }
@@ -704,6 +712,7 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
         const availableModels = await listCodexModels({
           codexPath: finalCodexPath,
           codexHome: finalCodexHome,
+          ownerId,
           includeHidden: false,
           requestTimeoutMs: CODEX_TIMEOUT_MS,
           context,
@@ -728,6 +737,7 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
         const codexResult = await runCodexChat({
           codexPath: finalCodexPath,
           codexHome: finalCodexHome,
+          ownerId,
           model: resolvedCodexModel,
           developerInstructions: systemPrompt,
           inputText: buildCodexTurnInput(messages),
@@ -758,6 +768,7 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
             const probe = await probeCodexAuth({
               codexPath: finalCodexPath,
               codexHome: finalCodexHome,
+              ownerId,
               includeModelProbe: false,
               requestTimeoutMs: CODEX_TIMEOUT_MS,
               context,
