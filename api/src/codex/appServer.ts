@@ -487,10 +487,27 @@ async function waitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeou
 }
 
 function hasCodexAccount(payload: unknown) {
-  if (!isRecord(payload)) return false;
+  return Boolean(parseCodexAccountState(payload).accountType);
+}
+
+type ParsedCodexAccountState = {
+  requiresOpenaiAuth: boolean;
+  accountType: string;
+  accountEmail: string;
+  planType: string;
+};
+
+function parseCodexAccountState(payload: unknown): ParsedCodexAccountState {
+  if (!isRecord(payload)) {
+    return { requiresOpenaiAuth: false, accountType: "", accountEmail: "", planType: "" };
+  }
   const account = isRecord(payload.account) ? payload.account : null;
-  const accountType = account && typeof account.type === "string" ? account.type : "";
-  return Boolean(accountType);
+  return {
+    requiresOpenaiAuth: Boolean(payload.requiresOpenaiAuth),
+    accountType: account && typeof account.type === "string" ? account.type : "",
+    accountEmail: account && typeof account.email === "string" ? account.email : "",
+    planType: account && typeof account.planType === "string" ? account.planType : "",
+  };
 }
 
 function sleep(ms: number) {
@@ -501,6 +518,27 @@ async function isSessionAuthenticated(session: CodexAppServerSession, requestTim
   try {
     const accountRead = await session.request("account/read", { refreshToken: true }, requestTimeoutMs);
     return hasCodexAccount(accountRead);
+  } catch {
+    return false;
+  }
+}
+
+async function canSessionListAnyModel(session: CodexAppServerSession, requestTimeoutMs = 10000) {
+  try {
+    const result = await session.request(
+      "model/list",
+      {
+        cursor: null,
+        includeHidden: false,
+        limit: 1,
+      },
+      requestTimeoutMs,
+    );
+    const payload = isRecord(result) ? result : null;
+    if (!payload) return false;
+    if (Array.isArray(payload.data)) return true;
+    if (typeof payload.nextCursor === "string") return true;
+    return false;
   } catch {
     return false;
   }
@@ -860,14 +898,16 @@ class CodexAppServerSession {
   }
 
   async ensureAuthenticated() {
-    const accountRead = await this.request("account/read", { refreshToken: true });
-    const accountPayload = isRecord(accountRead) ? accountRead : {};
-    const account = isRecord(accountPayload.account) ? accountPayload.account : null;
-    const requiresAuth = Boolean(accountPayload.requiresOpenaiAuth);
-    const accountType = account && typeof account.type === "string" ? account.type : "";
+    const accountState = parseCodexAccountState(await this.request("account/read", { refreshToken: true }));
+    if (accountState.accountType || !accountState.requiresOpenaiAuth) return;
 
-    if (accountType) return;
-    if (!requiresAuth) return;
+    // In hosted workers account/read can briefly lag right after token refresh.
+    // Recheck and probe model access before forcing a fresh login.
+    await sleep(250);
+    const recheckState = parseCodexAccountState(await this.request("account/read", { refreshToken: true }));
+    if (recheckState.accountType || !recheckState.requiresOpenaiAuth) return;
+    const canListModels = await canSessionListAnyModel(this, Math.min(this.requestTimeoutMs, 12000));
+    if (canListModels) return;
 
     const loginResult = await this.request("account/login/start", { type: "chatgpt" });
     const loginPayload = isRecord(loginResult) ? loginResult : {};
@@ -883,12 +923,17 @@ class CodexAppServerSession {
     | { status: "authenticated" }
     | { status: "login_required"; authUrl: string; loginId?: string; callbackUrl: string }
   > {
-    const accountRead = await this.request("account/read", { refreshToken: true });
-    const accountPayload = isRecord(accountRead) ? accountRead : {};
-    const account = isRecord(accountPayload.account) ? accountPayload.account : null;
-    const requiresAuth = Boolean(accountPayload.requiresOpenaiAuth);
-    const accountType = account && typeof account.type === "string" ? account.type : "";
-    if (accountType || !requiresAuth) {
+    const accountState = parseCodexAccountState(await this.request("account/read", { refreshToken: true }));
+    if (accountState.accountType || !accountState.requiresOpenaiAuth) {
+      return { status: "authenticated" };
+    }
+    await sleep(250);
+    const recheckState = parseCodexAccountState(await this.request("account/read", { refreshToken: true }));
+    if (recheckState.accountType || !recheckState.requiresOpenaiAuth) {
+      return { status: "authenticated" };
+    }
+    const canListModels = await canSessionListAnyModel(this, Math.min(this.requestTimeoutMs, 12000));
+    if (canListModels) {
       return { status: "authenticated" };
     }
 
@@ -1612,24 +1657,40 @@ export async function probeCodexAuth(options: ProbeCodexAuthOptions): Promise<Pr
 
   try {
     await session.initialize();
-    const accountRead = await session.request("account/read", { refreshToken: true });
-    const payload = isRecord(accountRead) ? accountRead : {};
-    const account = isRecord(payload.account) ? payload.account : null;
-    const requiresOpenaiAuth = Boolean(payload.requiresOpenaiAuth);
-    const accountType = account && typeof account.type === "string" ? account.type : "";
-    const accountEmail = account && typeof account.email === "string" ? account.email : "";
-    const planType = account && typeof account.planType === "string" ? account.planType : "";
+    let accountState = parseCodexAccountState(await session.request("account/read", { refreshToken: true }));
+
+    if (!accountState.accountType && accountState.requiresOpenaiAuth) {
+      // Retry once to reduce false negatives from transient refresh/read lag.
+      await sleep(250);
+      accountState = parseCodexAccountState(await session.request("account/read", { refreshToken: true }));
+    }
 
     const result: ProbeCodexAuthResult = {
-      authenticated: Boolean(accountType),
-      requiresOpenaiAuth,
-      accountType: accountType || undefined,
-      accountEmail: accountEmail || undefined,
-      planType: planType || undefined,
+      authenticated: Boolean(accountState.accountType),
+      requiresOpenaiAuth: accountState.requiresOpenaiAuth,
+      accountType: accountState.accountType || undefined,
+      accountEmail: accountState.accountEmail || undefined,
+      planType: accountState.planType || undefined,
       loginRequired: false,
     };
 
-    if (!accountType && requiresOpenaiAuth) {
+    if (!accountState.accountType && accountState.requiresOpenaiAuth) {
+      const canListModels = await canSessionListAnyModel(session, Math.min(requestTimeoutMs, 12000));
+      if (canListModels) {
+        result.authenticated = true;
+        result.requiresOpenaiAuth = false;
+        result.loginRequired = false;
+        if (options.includeModelProbe) {
+          try {
+            const models = await session.listModels(false);
+            result.modelCount = models.length;
+            result.sampleModels = models.slice(0, 8).map((m) => m.model);
+          } catch (error) {
+            options.context?.log(`Codex auth probe model/list failed after fallback probe: ${toErrorMessage(error)}`);
+          }
+        }
+        return result;
+      }
       result.loginRequired = true;
       try {
         const loginStatus = await session.startChatgptLoginIfRequired();
@@ -1642,7 +1703,7 @@ export async function probeCodexAuth(options: ProbeCodexAuthOptions): Promise<Pr
       return result;
     }
 
-    if (options.includeModelProbe && accountType) {
+    if (options.includeModelProbe && accountState.accountType) {
       try {
         const models = await session.listModels(false);
         result.modelCount = models.length;
