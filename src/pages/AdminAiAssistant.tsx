@@ -420,16 +420,17 @@ function AdminAiAssistant() {
       if (!loginId) {
         throw new Error("No pending Codex login session found. Click Sign in to OpenAI again and complete login from that new flow.");
       }
-      await completeCodexLogin({
+      return completeCodexLogin({
         loginId,
         callbackUrl,
         codexPath: codexPathDraft.trim() || undefined,
         codexHome: effectiveCodexHomeDraft || undefined,
       });
     },
-    onSuccess: async () => {
+    onSuccess: async (completion) => {
       setCodexCallbackDraft("");
-      const deadline = Date.now() + 45000;
+      const pendingRelay = completion?.mode === "relay-timeout-pending";
+      const deadline = Date.now() + (pendingRelay ? 90000 : 45000);
       let payload: Awaited<ReturnType<typeof fetchCodexModels>> | undefined;
       for (;;) {
         const refreshed = await codexModelsQuery.refetch();
@@ -450,6 +451,10 @@ function AdminAiAssistant() {
         }
       }
       if (!payload || payload.loginRequired) {
+        if (pendingRelay) {
+          alert("Codex callback was accepted and may still be processing. Wait a few seconds, click Refresh model list, then retry chat.");
+          return;
+        }
         alert("Codex callback was accepted, but login is still required. Click Sign in to OpenAI again to start a fresh session.");
         return;
       }

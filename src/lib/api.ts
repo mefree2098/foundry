@@ -472,7 +472,7 @@ export const fetchCodexAuthHealth = (params?: { codexPath?: string; codexHome?: 
 };
 
 export const completeCodexLogin = (payload: { loginId?: string; callbackUrl: string; codexPath?: string; codexHome?: string }) =>
-  sendJson<{ success: boolean }>("/ai/codex-login/complete", "POST", payload);
+  sendJson<{ success: boolean; mode?: string; message?: string }>("/ai/codex-login/complete", "POST", payload);
 
 export const aiChat = (payload: {
   authMode?: "apiKey" | "codexPath";

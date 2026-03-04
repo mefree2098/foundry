@@ -73,7 +73,8 @@ async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext
       body: "No pending Codex login session id found. Click Sign in to OpenAI again, then complete login from that new flow.",
     };
   }
-  const relayCompletionTimeoutMs = Number(process.env.CODEX_LOGIN_HTTP_WAIT_MS || 45000);
+  // Keep this below common hosted request timeouts and let UI poll for completion afterwards.
+  const relayCompletionTimeoutMs = Number(process.env.CODEX_LOGIN_HTTP_WAIT_MS || 12000);
   let relayErrorMessage = "";
 
   if (loginId) {
@@ -113,10 +114,15 @@ async function aiCodexLoginComplete(req: HttpRequest, context: InvocationContext
           // Keep fallback path.
         }
         return {
-          status: 409,
-          body:
-            "Timed out waiting for Codex login relay completion on the owning server instance. " +
-            "Wait a few seconds, then click Complete login again with the same callback URL.",
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            success: true,
+            mode: "relay-timeout-pending",
+            message:
+              "Codex login callback was accepted and is still processing on the owning server instance. " +
+              "Refresh model list in a few seconds.",
+          }),
         };
       }
     }
