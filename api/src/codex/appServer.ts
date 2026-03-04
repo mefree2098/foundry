@@ -540,6 +540,35 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function assertCodexCallbackForwardSucceeded(response: Response, label: string) {
+  const status = response.status;
+  const statusText = response.statusText || "";
+  let text = "";
+  try {
+    text = await response.text();
+  } catch {
+    text = "";
+  }
+  const body = text.slice(0, 1200);
+  const lowered = body.toLowerCase();
+  if (status >= 400) {
+    throw new Error(`${label} failed with status ${status}${statusText ? ` ${statusText}` : ""}.`);
+  }
+  // Codex localhost callback can return HTTP 200 with an HTML error page.
+  const hasHtmlSignInError =
+    lowered.includes("codex sign-in error") ||
+    lowered.includes("<title>codex sign-in error") ||
+    lowered.includes("sign-in error");
+  const hasTokenExchangeError =
+    lowered.includes("token exchange error") ||
+    lowered.includes("could not validate your token") ||
+    lowered.includes("invalid_request");
+  if (hasHtmlSignInError || hasTokenExchangeError) {
+    const snippet = body.replace(/\s+/g, " ").trim();
+    throw new Error(`${label} returned an auth error page. ${snippet || "Sign-in callback was rejected."}`);
+  }
+}
+
 async function isSessionAuthenticated(session: CodexAppServerSession, requestTimeoutMs = 5000) {
   try {
     const accountRead = await session.request("account/read", { refreshToken: true }, requestTimeoutMs);
@@ -1174,9 +1203,7 @@ async function forwardPendingLoginCallback(
     method: "GET",
     redirect: "manual",
   });
-  if (forwarded.status >= 400) {
-    throw new Error(`Codex callback relay failed with status ${forwarded.status}.`);
-  }
+  await assertCodexCallbackForwardSucceeded(forwarded, "Codex callback relay");
 
   const waitMs = Number.isFinite(completionTimeoutMs) ? Number(completionTimeoutMs) : DEFAULT_CODEX_LOGIN_COMPLETE_TIMEOUT_MS;
   const deadline = Date.now() + Math.max(1000, waitMs);
@@ -1577,9 +1604,7 @@ export async function completeCodexLoginViaCallback(options: CompleteCodexLoginV
       method: "GET",
       redirect: "manual",
     });
-    if (forwarded.status >= 400) {
-      throw new Error(`Codex callback relay failed with status ${forwarded.status}.`);
-    }
+    await assertCodexCallbackForwardSucceeded(forwarded, "Codex localhost callback");
     const deadline = Date.now() + Math.max(500, waitForAuthMs);
     for (;;) {
       const ok = await checkCodexAuthenticated({
@@ -1626,9 +1651,7 @@ export async function completeCodexLoginViaCallback(options: CompleteCodexLoginV
       method: "GET",
       redirect: "manual",
     });
-    if (forwarded.status >= 400) {
-      throw new Error(`Codex callback replay failed with status ${forwarded.status}.`);
-    }
+    await assertCodexCallbackForwardSucceeded(forwarded, "Codex callback replay");
     const ok = await waitForSessionAuthenticated(replaySession, waitForAuthMs);
     if (ok) return;
     replayError = "Codex callback replay succeeded, but authentication did not complete in time.";
