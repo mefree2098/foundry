@@ -6,7 +6,7 @@ import { database } from "../client.js";
 import { containers } from "../cosmos.js";
 import { siteConfigSchema } from "../types/content.js";
 import { recordChatUsage } from "../aiUsage.js";
-import { buildCodexTurnInput, CodexLoginRequiredError, runCodexChat } from "../codex/appServer.js";
+import { buildCodexTurnInput, CodexLoginRequiredError, listCodexModels, probeCodexAuth, runCodexChat } from "../codex/appServer.js";
 import { deriveCodexHomeFromProfile } from "../codex/homeProfile.js";
 
 const INTERNAL_TRAINING = `You are the Foundry admin assistant.
@@ -699,11 +699,36 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
     }
 
     if (finalAuthMode === "codexPath") {
+      let resolvedCodexModel = finalModel;
+      try {
+        const availableModels = await listCodexModels({
+          codexPath: finalCodexPath,
+          codexHome: finalCodexHome,
+          includeHidden: false,
+          requestTimeoutMs: CODEX_TIMEOUT_MS,
+          context,
+        });
+        if (availableModels.length && !availableModels.some((item) => item.model === resolvedCodexModel)) {
+          const preferred = availableModels.find((item) => item.isDefault) || availableModels[0];
+          if (preferred?.model) {
+            context.log(`Codex model '${resolvedCodexModel}' not in current model list; using '${preferred.model}' for this chat turn.`);
+            resolvedCodexModel = preferred.model;
+          }
+        }
+      } catch (err) {
+        if (err instanceof CodexLoginRequiredError) {
+          return aiErrorResponse(
+            `Codex subscription login is required. Open this URL, finish login, then retry: ${err.authUrl}`,
+          );
+        }
+        context.log(`Codex preflight model/list failed; continuing with requested model '${resolvedCodexModel}': ${err instanceof Error ? err.message : String(err)}`);
+      }
+
       try {
         const codexResult = await runCodexChat({
           codexPath: finalCodexPath,
           codexHome: finalCodexHome,
-          model: finalModel,
+          model: resolvedCodexModel,
           developerInstructions: systemPrompt,
           inputText: buildCodexTurnInput(messages),
           outputSchema: ACTION_ENVELOPE_SCHEMA,
@@ -725,6 +750,30 @@ async function aiChat(req: HttpRequest, context: InvocationContext): Promise<Htt
           );
         }
         const message = err instanceof Error ? err.message : String(err);
+        const isMissingBearer401 =
+          message.includes("401 Unauthorized") &&
+          (message.toLowerCase().includes("missing bearer") || message.toLowerCase().includes("missing bearer or basic authentication"));
+        if (isMissingBearer401) {
+          try {
+            const probe = await probeCodexAuth({
+              codexPath: finalCodexPath,
+              codexHome: finalCodexHome,
+              includeModelProbe: false,
+              requestTimeoutMs: CODEX_TIMEOUT_MS,
+              context,
+            });
+            if (probe.loginRequired && probe.authUrl) {
+              return aiErrorResponse(
+                `Codex subscription login is required. Open this URL, finish login, then retry: ${probe.authUrl}`,
+              );
+            }
+          } catch {
+            // Keep generic recovery guidance below.
+          }
+          return aiErrorResponse(
+            "Codex auth token is stale on this worker (OpenAI returned 401 missing bearer auth). Click Sign in to OpenAI in Admin, complete login, then retry chat.",
+          );
+        }
         context.log(`Codex request failed: ${message}`);
         return aiErrorResponse(`Codex request failed: ${message}`);
       }

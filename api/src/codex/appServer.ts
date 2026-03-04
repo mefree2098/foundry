@@ -91,6 +91,7 @@ export type StartCodexLoginRelayOptions = {
   ownerId: string;
   codexPath: string;
   codexHome?: string;
+  forceLogin?: boolean;
   requestTimeoutMs?: number;
   context?: InvocationContext;
 };
@@ -144,6 +145,12 @@ type PendingCodexLogin = {
   session: CodexAppServerSession;
   completion: Promise<void>;
   stopRemoteTaskPump?: () => void;
+};
+
+type ParsedCodexLoginStart = {
+  authUrl: string;
+  loginId?: string;
+  callbackUrl: string;
 };
 
 type CodexLoginSessionDoc = {
@@ -510,6 +517,25 @@ function parseCodexAccountState(payload: unknown): ParsedCodexAccountState {
   };
 }
 
+function parseCodexLoginStartPayload(loginResult: unknown): ParsedCodexLoginStart {
+  const loginPayload = isRecord(loginResult) ? loginResult : {};
+  const authUrl = typeof loginPayload.authUrl === "string" ? loginPayload.authUrl.trim() : "";
+  const loginId = typeof loginPayload.loginId === "string" ? loginPayload.loginId : undefined;
+  if (!authUrl) {
+    throw new Error("Codex login/start did not return authUrl.");
+  }
+  let callbackUrl = "";
+  try {
+    callbackUrl = new URL(authUrl).searchParams.get("redirect_uri") || "";
+  } catch {
+    callbackUrl = "";
+  }
+  if (!callbackUrl) {
+    throw new Error("Codex login/start returned authUrl without redirect_uri.");
+  }
+  return { authUrl, loginId, callbackUrl };
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -518,27 +544,6 @@ async function isSessionAuthenticated(session: CodexAppServerSession, requestTim
   try {
     const accountRead = await session.request("account/read", { refreshToken: true }, requestTimeoutMs);
     return hasCodexAccount(accountRead);
-  } catch {
-    return false;
-  }
-}
-
-async function canSessionListAnyModel(session: CodexAppServerSession, requestTimeoutMs = 10000) {
-  try {
-    const result = await session.request(
-      "model/list",
-      {
-        cursor: null,
-        includeHidden: false,
-        limit: 1,
-      },
-      requestTimeoutMs,
-    );
-    const payload = isRecord(result) ? result : null;
-    if (!payload) return false;
-    if (Array.isArray(payload.data)) return true;
-    if (typeof payload.nextCursor === "string") return true;
-    return false;
   } catch {
     return false;
   }
@@ -902,21 +907,12 @@ class CodexAppServerSession {
     if (accountState.accountType || !accountState.requiresOpenaiAuth) return;
 
     // In hosted workers account/read can briefly lag right after token refresh.
-    // Recheck and probe model access before forcing a fresh login.
+    // Recheck once before forcing a fresh login.
     await sleep(250);
     const recheckState = parseCodexAccountState(await this.request("account/read", { refreshToken: true }));
     if (recheckState.accountType || !recheckState.requiresOpenaiAuth) return;
-    const canListModels = await canSessionListAnyModel(this, Math.min(this.requestTimeoutMs, 12000));
-    if (canListModels) return;
-
-    const loginResult = await this.request("account/login/start", { type: "chatgpt" });
-    const loginPayload = isRecord(loginResult) ? loginResult : {};
-    const authUrl = typeof loginPayload.authUrl === "string" ? loginPayload.authUrl.trim() : "";
-    const loginId = typeof loginPayload.loginId === "string" ? loginPayload.loginId : undefined;
-    if (authUrl) {
-      throw new CodexLoginRequiredError(authUrl, loginId);
-    }
-    throw new Error("Codex authentication is required. Log in with ChatGPT and retry.");
+    const started = parseCodexLoginStartPayload(await this.request("account/login/start", { type: "chatgpt" }));
+    throw new CodexLoginRequiredError(started.authUrl, started.loginId);
   }
 
   async startChatgptLoginIfRequired(): Promise<
@@ -932,28 +928,8 @@ class CodexAppServerSession {
     if (recheckState.accountType || !recheckState.requiresOpenaiAuth) {
       return { status: "authenticated" };
     }
-    const canListModels = await canSessionListAnyModel(this, Math.min(this.requestTimeoutMs, 12000));
-    if (canListModels) {
-      return { status: "authenticated" };
-    }
-
-    const loginResult = await this.request("account/login/start", { type: "chatgpt" });
-    const loginPayload = isRecord(loginResult) ? loginResult : {};
-    const authUrl = typeof loginPayload.authUrl === "string" ? loginPayload.authUrl.trim() : "";
-    const loginId = typeof loginPayload.loginId === "string" ? loginPayload.loginId : undefined;
-    if (!authUrl) {
-      throw new Error("Codex login/start did not return authUrl.");
-    }
-    let callbackUrl = "";
-    try {
-      callbackUrl = new URL(authUrl).searchParams.get("redirect_uri") || "";
-    } catch {
-      callbackUrl = "";
-    }
-    if (!callbackUrl) {
-      throw new Error("Codex login/start returned authUrl without redirect_uri.");
-    }
-    return { status: "login_required", authUrl, loginId, callbackUrl };
+    const started = parseCodexLoginStartPayload(await this.request("account/login/start", { type: "chatgpt" }));
+    return { status: "login_required", authUrl: started.authUrl, loginId: started.loginId, callbackUrl: started.callbackUrl };
   }
 
   async listModels(includeHidden = false): Promise<CodexModelSummary[]> {
@@ -1394,8 +1370,30 @@ export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions)
 
   try {
     await session.initialize();
-    const loginStatus = await session.startChatgptLoginIfRequired();
-    if (loginStatus.status === "authenticated") {
+    let resolvedLoginStatus:
+      | { status: "authenticated" }
+      | { status: "login_required"; authUrl: string; loginId?: string; callbackUrl: string };
+    if (options.forceLogin) {
+      try {
+        const started = parseCodexLoginStartPayload(await session.request("account/login/start", { type: "chatgpt" }));
+        resolvedLoginStatus = {
+          status: "login_required",
+          authUrl: started.authUrl,
+          loginId: started.loginId,
+          callbackUrl: started.callbackUrl,
+        };
+      } catch (error) {
+        const message = toErrorMessage(error).toLowerCase();
+        if (message.includes("did not return authurl") || message.includes("without redirect_uri")) {
+          await session.close();
+          return null;
+        }
+        throw error;
+      }
+    } else {
+      resolvedLoginStatus = await session.startChatgptLoginIfRequired();
+    }
+    if (resolvedLoginStatus.status === "authenticated") {
       await session.close();
       return null;
     }
@@ -1418,7 +1416,7 @@ export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions)
       };
     });
 
-    const loginId = loginStatus.loginId;
+    const loginId = resolvedLoginStatus.loginId;
     const stopListening = session.onNotification((method, params) => {
       if (!isRecord(params)) return;
       if (method === "account/login/completed") {
@@ -1454,8 +1452,8 @@ export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions)
       ownerId,
       loginKey,
       loginId,
-      authUrl: loginStatus.authUrl,
-      callbackUrl: loginStatus.callbackUrl,
+      authUrl: resolvedLoginStatus.authUrl,
+      callbackUrl: resolvedLoginStatus.callbackUrl,
       expiresAt,
       session,
       completion,
@@ -1471,8 +1469,8 @@ export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions)
     return {
       loginKey,
       loginId,
-      authUrl: loginStatus.authUrl,
-      callbackUrl: loginStatus.callbackUrl,
+      authUrl: resolvedLoginStatus.authUrl,
+      callbackUrl: resolvedLoginStatus.callbackUrl,
       expiresAt,
     };
   } catch (error) {
@@ -1675,22 +1673,6 @@ export async function probeCodexAuth(options: ProbeCodexAuthOptions): Promise<Pr
     };
 
     if (!accountState.accountType && accountState.requiresOpenaiAuth) {
-      const canListModels = await canSessionListAnyModel(session, Math.min(requestTimeoutMs, 12000));
-      if (canListModels) {
-        result.authenticated = true;
-        result.requiresOpenaiAuth = false;
-        result.loginRequired = false;
-        if (options.includeModelProbe) {
-          try {
-            const models = await session.listModels(false);
-            result.modelCount = models.length;
-            result.sampleModels = models.slice(0, 8).map((m) => m.model);
-          } catch (error) {
-            options.context?.log(`Codex auth probe model/list failed after fallback probe: ${toErrorMessage(error)}`);
-          }
-        }
-        return result;
-      }
       result.loginRequired = true;
       try {
         const loginStatus = await session.startChatgptLoginIfRequired();

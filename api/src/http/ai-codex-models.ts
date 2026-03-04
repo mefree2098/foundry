@@ -49,6 +49,37 @@ async function aiCodexModels(req: HttpRequest, context: InvocationContext): Prom
   const fallbackFromProfile = deriveCodexHomeFromProfile(stored.codexHomeProfile, stored.codexAwsVolumeRoot);
   const finalCodexHome = (queryHome || stored.codexHome || fallbackFromProfile || process.env.CODEX_HOME || "").trim() || undefined;
 
+  if (startLogin) {
+    try {
+      const started = await startCodexLoginRelay({
+        ownerId: principal.userId,
+        codexPath: finalCodexPath,
+        codexHome: finalCodexHome,
+        forceLogin: true,
+        context,
+      });
+      if (started?.loginKey && started.authUrl) {
+        return {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source: "codex",
+            includeHidden,
+            loginRequired: true,
+            authUrl: started.authUrl,
+            pendingLoginId: started.loginKey,
+            callbackHint: "If login lands on localhost and fails, paste that full URL into Complete login.",
+            models: [],
+          }),
+        };
+      }
+    } catch (relayErr) {
+      const relayMessage = relayErr instanceof Error ? relayErr.message : String(relayErr);
+      context.log(`ai-codex-models forced login relay start failed: ${relayMessage}`);
+      return { status: 502, body: `Unable to start Codex login session: ${relayMessage}` };
+    }
+  }
+
   try {
     const models = await listCodexModels({
       codexPath: finalCodexPath,
