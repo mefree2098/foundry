@@ -107,6 +107,7 @@ async function aiCodexModels(req: HttpRequest, context: InvocationContext): Prom
             ownerId: principal.userId,
             codexPath: finalCodexPath,
             codexHome: finalCodexHome,
+            forceLogin: true,
             context,
           });
           if (!started?.loginKey || !started.authUrl) {

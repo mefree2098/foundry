@@ -1343,6 +1343,9 @@ export async function startCodexLoginRelay(options: StartCodexLoginRelayOptions)
   if (!ownerId) {
     throw new Error("ownerId is required for Codex login relay.");
   }
+  if (options.forceLogin) {
+    await clearPendingLoginsForOwner(ownerId);
+  }
   const existingPending = findActivePendingLoginForOwner(ownerId);
   if (existingPending) {
     await upsertCodexLoginSessionDoc({ ownerId, loginKey: existingPending.loginKey, expiresAt: existingPending.expiresAt });
