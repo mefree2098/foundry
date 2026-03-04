@@ -570,6 +570,17 @@ Fix:
 - Do not require users to click Save manually after login.
 - If you skip this, users can complete login in draft state, reload later, and appear "not configured" again because stored settings were never updated.
 
+### 17.5 Owner context threading rule (critical)
+
+- If you implement auth snapshot restore/persist keyed by user/owner, you must pass `ownerId` into **every** code path that creates a Codex app-server session.
+- In this implementation, that includes:
+  - chat execution path
+  - model list path
+  - auth health/probe path
+  - callback completion validation/replay paths
+- Missing `ownerId` on model list or auth probe causes false `loginRequired` after refresh, even when login recently succeeded, because snapshot restore is skipped on those requests.
+- This specific omission is easy to miss because chat may still work temporarily on the same worker while refresh/probe appears unauthenticated.
+
 ---
 
 ## 18) Exact implementation map (files/endpoints/UI)

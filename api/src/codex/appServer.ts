@@ -1820,6 +1820,7 @@ export async function probeCodexAuth(options: ProbeCodexAuthOptions): Promise<Pr
     {
       codexPath: options.codexPath,
       codexHome: options.codexHome,
+      ownerId: options.ownerId,
       model: "gpt-5.1-codex",
       developerInstructions: "",
       inputText: "",
@@ -1883,6 +1884,7 @@ export async function listCodexModels(options: ListCodexModelsOptions): Promise<
     {
       codexPath: options.codexPath,
       codexHome: options.codexHome,
+      ownerId: options.ownerId,
       model: "gpt-5.1-codex",
       developerInstructions: "",
       inputText: "",
