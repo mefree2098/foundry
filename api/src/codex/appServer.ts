@@ -500,21 +500,6 @@ function parseCallbackUrl(callbackUrlOrQuery: string): URL {
   return parsed;
 }
 
-async function waitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return promise;
-  }
-  let timer: NodeJS.Timeout | null = null;
-  try {
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-    });
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 function hasCodexAccount(payload: unknown) {
   return Boolean(parseCodexAccountState(payload).accountType);
 }
